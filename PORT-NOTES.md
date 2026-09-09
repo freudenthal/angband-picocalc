@@ -39,6 +39,8 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 |---|---|
 | `src/game/` | 150 `.c` and 166 `.h` — the whole core. Built for the device. |
 | `src/host/` | Upstream `main.c` and `main-test.c`. **WSL harness only**; never compiled for the device. |
+| `src/platform/` | The platform layer. `lcd.c/.h`, `font5x10.c/.h`, `southbridge.c/.h` copied byte-identical from `../tinyrogue-pico/src/platform/`; `psram_heap.c/.h` port-written. Stage 020. |
+| `src/psramdiag.c` | The stage 020 PSRAM diagnostic. Port-written. |
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
 | `tools/` | The suite and the heap probe. Port-written. |
@@ -123,6 +125,38 @@ signals.
 device. `heapshim_report()` is declared weak, so the binary still runs without the
 `LD_PRELOAD` shim. This file is host-only and never reaches the firmware.
 
+## The platform layer
+
+`src/platform/` is not vendored from Angband. It is the PicoCalc hardware layer, shared with
+the sibling ports (`../.llm/projects/angband-picocalc/specifications.md` §4, platform layer
+source: copy from `zangband-pico/` when the file exists there, else from `tinyrogue-pico/`;
+never write a second LCD driver).
+
+| File | Origin | Stage |
+|---|---|---|
+| `lcd.c`, `lcd.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
+| `font5x10.c`, `font5x10.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
+| `southbridge.c`, `southbridge.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
+| `psram_heap.c`, `psram_heap.h` | port-written here | 020 |
+
+The three copied pairs carry tinyrogue's own `PORT:` banners, which name their upstream
+(Picoware `841d9c56`, whose own upstream is
+https://github.com/BlairLeduc/picocalc-text-starter, MIT) and every change tinyrogue made:
+the PIO transport replaced by hardware SPI on `spi1` at 25 MHz, and `pico/multicore.h`
+dropped. **No further change was made here.** `tools/platform-cmp.sh` is the check — it
+compares every copied file against its source tree and exits non-zero on a difference.
+`zangband-pico/` had no `src/platform/` when stage 020 ran, so tinyrogue was the source for
+all three pairs; when the Zangband port reaches its own stage 020, these files and
+`psram_heap.c/.h` are what it should copy.
+
+`psram_heap.c` is port-written and has no upstream. It defines a strong `_sbrk` that
+overrides the SDK's `__weak` one in `pico_clib_interface/newlib_interface.c`, so the whole
+newlib heap lives in the 8 MB PSRAM. **It is in a static library, so the linker only pulls it
+in if something references one of its symbols** — an executable that wants the PSRAM heap
+must call `psram_heap_stats()` (or another function from that header) at least once.
+`src/psramdiag.c` does, and the link map for `angband_psramdiag` confirms the result: the
+SDK's `.text._sbrk` under "Discarded input sections", and this one at `0x10004fec`.
+
 ## Known deviations from a clean `PICOCALC` build
 
 * **`<signal.h>` reaches every device translation unit.** Upstream `h-basic.h:113`
@@ -146,5 +180,7 @@ See `../.llm/projects/angband-picocalc/specifications.md` §10. In short:
 cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh
 angband-pico/tools/compile-sweep.sh      # the suite, part 1: cross-compile sweep
 angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, tests, heap probe
+angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree
 cmake --build angband-pico/build-pico2 --target angband_core
+cmake --build angband-pico/build-pico2 --target angband_psramdiag
 ```
