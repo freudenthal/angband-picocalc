@@ -47,7 +47,17 @@
 /**
  * Define UNIX if our OS is UNIXy
  */
-#if !defined(WINDOWS) && !defined(GAMEBOY) && !defined(NDS)
+/*
+ * PORT: PicoCalc (RP2350). PICOCALC joins the list of platforms that are not UNIX.
+ * Turning UNIX off removes <pwd.h>, <signal.h> and the uid/getpwuid calls, the fcntl
+ * file locks and ~ expansion in z-file.c, /dev/urandom seeding in z-rand.c, the signal
+ * handlers in ui-signals.c and PRIVATE_USER_PATH in config.h. The three HAVE_ macros
+ * the file layer needs are defined below instead: pico-vfs supplies sys/dirent.h,
+ * opendir/readdir/closedir, stat() and mkdir(). HAVE_FCNTL_H is already defined
+ * unconditionally above; every use of it in z-file.c is also gated on UNIX, so no
+ * lock code is compiled.
+ */
+#if !defined(WINDOWS) && !defined(GAMEBOY) && !defined(NDS) && !defined(PICOCALC)
 # define UNIX
 
 # ifndef HAVE_DIRENT_H
@@ -69,6 +79,23 @@
 # endif
 
 #endif
+
+/*
+ * PORT: PicoCalc file-layer capabilities. pico-vfs (mounted at /) implements these
+ * through newlib, and ships its own <sys/dirent.h>, so z-file.c compiles unchanged.
+ * Deliberately no HAVE_SIGACTION / HAVE_SIGPROCMASK: there are no signals.
+ */
+#ifdef PICOCALC
+# ifndef HAVE_DIRENT_H
+#  define HAVE_DIRENT_H
+# endif
+# ifndef HAVE_STAT
+#  define HAVE_STAT
+# endif
+# ifndef HAVE_MKDIR
+#  define HAVE_MKDIR
+# endif
+#endif /* PICOCALC */
 
 /**
  * Every system seems to use its own symbol as a path separator.

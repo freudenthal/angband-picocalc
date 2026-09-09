@@ -18,6 +18,8 @@
 
 #include "angband.h"
 #include "buildid.h"
+/* PORT: cmd-core.h, for the CMD_WIZ_JUMP_LEVEL push in c_jump() below. */
+#include "cmd-core.h"
 #include "main.h"
 #include "player.h"
 #include "player-birth.h"
@@ -111,6 +113,40 @@ static void c_player_race(char *rest) {
 	printf("player-race: %s\n", player->race->name);
 }
 
+/*
+ * PORT: three probes for the port's host harness (tools/host-build.sh). They exist to
+ * measure the heap table in specifications.md section 7.1 without a device, and are
+ * compiled only into the host build; src/host/ is not part of the device firmware.
+ *
+ *   heap?  [tag]  ask tools/heapshim.c for live/peak/allocation counts. The symbol is
+ *                 weak, so the binary still runs without LD_PRELOAD.
+ *   depth?        print the current dungeon level.
+ *   jump N        queue a wizard level jump, bypassing the Ctrl-A confirmation prompt.
+ */
+extern void heapshim_report(const char *tag) __attribute__((weak));
+
+static void c_heap(char *rest) {
+	if (heapshim_report) {
+		heapshim_report(rest ? rest : "?");
+	} else {
+		printf("heap: no shim\n");
+	}
+}
+
+static void c_depth(char *rest) {
+	printf("depth: %d\n", player->depth);
+}
+
+static void c_jump(char *rest) {
+	int n = rest ? atoi(rest) : 1;
+
+	cmdq_push(CMD_WIZ_JUMP_LEVEL);
+	cmd_set_arg_number(cmdq_peek(), "level", n);
+	cmd_set_arg_choice(cmdq_peek(), "choice", 0);
+	printf("jump: queued %d\n", n);
+}
+/* PORT: end */
+
 typedef struct {
 	const char *name;
 	void (*func)(char *args);
@@ -123,6 +159,13 @@ static test_cmd cmds[] = {
 	{ "quit", c_quit },
 	{ "verbose", c_verbose },
 	{ "version?", c_version },
+
+
+	/* PORT: harness probes, see above. */
+	{ "heap?", c_heap },
+	{ "depth?", c_depth },
+	{ "jump", c_jump },
+	/* PORT: end */
 
 	{ "player-birth", c_player_birth },
 	{ "player-class?", c_player_class },

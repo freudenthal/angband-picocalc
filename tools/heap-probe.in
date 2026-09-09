@@ -1,0 +1,64 @@
+# heap-probe.in -- stdin script for build-host/angband-test -mtest, run under
+# LD_PRELOAD=heapshim.so by tools/host-build.sh. Reproduces the heap table in
+# specifications.md section 7.1.
+#
+# One command per line; see specifications.md section 6.6. "key" pushes a keypress at the
+# next TERM_XTRA_EVENT, so screen text lags a line behind the command that caused it; the
+# depth? and heap? probes run immediately and are what the numbers are read from.
+#
+# The birth sequence is: space past the splash, 'a' for the first race, 'a' for the first
+# class, 'a' to accept, then four returns through name, history and the final confirmation.
+# The four "key ," after each jump are stand-still turns that let the game loop process the
+# queued CMD_WIZ_JUMP_LEVEL and generate the new level.
+#
+# The jumps go 50, 30, 10, 98 -- shallow-to-deep with the deepest last, because a level-1
+# character standing still on level 98 usually dies, and after death the game loop stops
+# processing queued commands, so any jump after it silently reports the old depth.
+
+heap? init
+
+key space
+key a
+key a
+key a
+key enter
+key enter
+key enter
+key enter
+
+depth?
+heap? town
+
+jump 50
+key ,
+key ,
+key ,
+key ,
+depth?
+heap? L50
+
+jump 30
+key ,
+key ,
+key ,
+key ,
+depth?
+heap? L30
+
+jump 10
+key ,
+key ,
+key ,
+key ,
+depth?
+heap? L10
+
+jump 98
+key ,
+key ,
+key ,
+key ,
+depth?
+heap? L98
+
+quit
