@@ -111,17 +111,22 @@ target_link_libraries(angband_core PUBLIC pico_stdlib_headers)
 # 841d9c56 / picocalc-text-starter (MIT) as their upstream. specifications.md 7.2 requires
 # they stay byte-identical; tools/platform-cmp.sh checks that.
 #
-# psram_heap.c, sd_fs.c and syscalls.c are port-written; keyboard.c arrives in stage 040.
+# psram_heap.c, sd_fs.c and syscalls.c are port-written.
 #
 # syscalls.c holds strong _gettimeofday / _getpid / _kill over the SDK's __weak ones. It
 # only wins if the executable references syscalls_init() by name -- the stage 020 _sbrk
 # trap again. See src/platform/syscalls.h.
+# keyboard.c arrived in stage 040 and is copied byte-identical from tinyrogue-pico too. It
+# knows nothing about Angband: it reports (scan code, shift, ctrl, alt) and main-pico.c maps
+# that onto ui-event.h's keycodes. main-pico.c and utf8.c are NOT here -- they include core
+# headers, so they belong to the targets that link core code; see angband_termdiag below.
 add_library(angband_platform STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psram_heap.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/sd_fs.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/syscalls.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/lcd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/southbridge.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/keyboard.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/font5x10.c
 )
 
@@ -237,3 +242,71 @@ pico_enable_stdio_usb(angband_fsdiag 1)
 pico_enable_stdio_uart(angband_fsdiag 0)
 
 pico_add_extra_outputs(angband_fsdiag)
+
+# ---------------------------------------------------------------------------------------
+# angband_termdiag (stage 040) -- the terminal front end.
+#
+# Like angband_fsdiag it does NOT link angband_core. angband_zterm below is the six units
+# ui-term.c needs to link, compiled straight from src/game/, so a failure is in main-pico.c,
+# in utf8.c or in ui-term.c and not somewhere among 150 translation units.
+#
+# The list was found by linking and reading the errors, in this order: ui-term.c pulled in
+# z-virt.c (mem_alloc), z-util.c (quit, plog), z-color.c (angband_color_table) and
+# buildid.c (buildid, used by Term_xtra's window title path); z-virt.c pulled in z-form.c
+# (vstrnfmt). That is the whole closure -- six units. specifications.md 6.4 records it.
+#
+# OBJECT library for the same reason angband_zfile is one: these sources need gnu99, and
+# C_STANDARD 99 on an executable also applies to every SDK source pico_stdlib injects into
+# it, which fails in the SDK's own headers (stage 020 and 030 corrections).
+add_library(angband_zterm OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/ui-term.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-util.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-virt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-form.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-color.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/buildid.c
+)
+
+target_compile_definitions(angband_zterm PUBLIC
+    PICOCALC=1
+    DEFAULT_CONFIG_PATH="/angband/lib/"
+    DEFAULT_LIB_PATH="/angband/lib/"
+    DEFAULT_DATA_PATH="/angband/lib/"
+)
+target_include_directories(angband_zterm PUBLIC
+    ${PICO_VFS_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+)
+target_compile_options(angband_zterm PRIVATE -w -ffunction-sections -fdata-sections)
+set_target_properties(angband_zterm PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
+target_link_libraries(angband_zterm PUBLIC pico_stdlib_headers)
+
+# main-pico.c and utf8.c are the port's own front end. They include core headers, so they
+# cannot live in angband_platform (which knows nothing about the game and is linked by
+# angband_psramdiag and angband_fsdiag, neither of which has ui-term.c). They compile at the
+# project default C11, like termdiag.c itself.
+add_executable(angband_termdiag
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/termdiag.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/main-pico.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/utf8.c
+    $<TARGET_OBJECTS:angband_zterm>
+)
+
+target_include_directories(angband_termdiag PRIVATE
+    ${PICO_VFS_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+)
+target_compile_definitions(angband_termdiag PRIVATE
+    PICOCALC=1
+    DEFAULT_CONFIG_PATH="/angband/lib/"
+    DEFAULT_LIB_PATH="/angband/lib/"
+    DEFAULT_DATA_PATH="/angband/lib/"
+)
+
+target_link_libraries(angband_termdiag PRIVATE angband_platform)
+
+# specifications.md 6.5: serial at 115200 and the LCD, both.
+pico_enable_stdio_usb(angband_termdiag 1)
+pico_enable_stdio_uart(angband_termdiag 0)
+
+pico_add_extra_outputs(angband_termdiag)

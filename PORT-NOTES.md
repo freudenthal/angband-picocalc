@@ -164,16 +164,34 @@ never write a second LCD driver).
 | `psram_heap.c`, `psram_heap.h` | port-written here | 020 |
 | `sd_fs.c`, `sd_fs.h` | port-written here | 030 |
 | `syscalls.c`, `syscalls.h` | port-written here | 030 |
+| `keyboard.c`, `keyboard.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 040 |
+| `main-pico.c`, `main-pico.h` | port-written here | 040 |
+| `utf8.c`, `utf8.h` | port-written here | 040 |
 
-The three copied pairs carry tinyrogue's own `PORT:` banners, which name their upstream
+The four copied pairs carry tinyrogue's own `PORT:` banners, which name their upstream
 (Picoware `841d9c56`, whose own upstream is
 https://github.com/BlairLeduc/picocalc-text-starter, MIT) and every change tinyrogue made:
 the PIO transport replaced by hardware SPI on `spi1` at 25 MHz, and `pico/multicore.h`
 dropped. **No further change was made here.** `tools/platform-cmp.sh` is the check — it
 compares every copied file against its source tree and exits non-zero on a difference.
-`zangband-pico/` had no `src/platform/` when stage 020 ran, so tinyrogue was the source for
-all three pairs; when the Zangband port reaches its own stage 020, these files and
-`psram_heap.c/.h` are what it should copy.
+`zangband-pico/` had no `src/platform/` when stage 020 ran, and still had none when stage 040
+copied `keyboard.c/.h`, so tinyrogue was the source for all four pairs; when the Zangband
+port reaches its own stage 020, these files and `psram_heap.c/.h` are what it should copy.
+
+`keyboard.c` is tinyrogue's, unchanged, and it is deliberately Angband-unaware: it reports
+`(scan code, shift, ctrl, alt)` with the modifiers latched at the moment the key was queued,
+and `main-pico.c` decides what that means. Its header says why Picoware's own keyboard driver
+was not vendored -- it folds Shift into the character and then throws the modifier away in a
+file-private static.
+
+`main-pico.c` is the file upstream calls `main-xxx.c`: the four Term hooks, the key map and
+`init_pico()`. `utf8.c` is the text-encoding half. Both include core headers, so neither is a
+member of `angband_platform` -- they are sources on the executables that link core code. The
+front end is specified in `specifications.md` 6.4; the two decisions in it that are not
+obvious from the code are that the UTF-8 decoder never returns -1 (a strict one would make
+`Term_addstr()` draw nothing at all for a line containing one bad byte) and that Ctrl+letter
+is encoded as `KTRL(c)` with `KC_MOD_CONTROL` *cleared*, following `ui-event.h:82` and
+`ui-event.c`'s `STORE()` macro rather than the stage plan's wording.
 
 `psram_heap.c` is port-written and has no upstream. It defines a strong `_sbrk` that
 overrides the SDK's `__weak` one in `pico_clib_interface/newlib_interface.c`, so the whole
@@ -227,4 +245,6 @@ angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, te
 angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree
 cmake --build angband-pico/build-pico2 --target angband_core
 cmake --build angband-pico/build-pico2 --target angband_psramdiag
+cmake --build angband-pico/build-pico2 --target angband_fsdiag
+cmake --build angband-pico/build-pico2 --target angband_termdiag
 ```

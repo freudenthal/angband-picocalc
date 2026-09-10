@@ -13,7 +13,8 @@
 # is chosen, and this WSL has no X11 headers. The file list is compiled directly instead.
 #
 # Expected output:
-#   Total: 4/4
+#   host-build: utf8-test 38/38 checks passed
+#   Total: 5/5
 #   depth: 50  followed by  HEAP[L50] live=...
 #
 # Everything is built under angband-pico/build-host/, which is gitignored. The WSL side
@@ -58,6 +59,21 @@ fi
 
 echo "host-build: linking"
 gcc -o "$B/angband-test" "$B"/obj/*.o -lm || exit 1
+
+# Stage 040. The front end's UTF-8 decoder, checked on the host because its failure mode on
+# the device is silent: a wrong wide-character count just shifts a line by a cell.
+echo
+echo "host-build: front end unit checks (utf8.c)"
+gcc -O1 -std=gnu99 -Wall -Wextra -I"$PORT/src/platform" -I"$PORT/src/game" \
+	-o "$B/utf8-test" "$PORT/tools/utf8-test.c" "$PORT/src/platform/utf8.c" || exit 1
+if "$B/utf8-test" > "$B/utf8.log" 2>&1; then
+	echo "host-build: utf8-test $(grep -c '^ok ' "$B/utf8.log")/$(grep -c '^ok \|^FAIL ' "$B/utf8.log") checks passed"
+else
+	echo "host-build: utf8-test FAILED"
+	cat "$B/utf8.log"
+	exit 1
+fi
+echo
 
 echo "host-build: building heapshim.so"
 gcc -O2 -fPIC -shared -o "$B/heapshim.so" "$PORT/tools/heapshim.c" -ldl || exit 1
