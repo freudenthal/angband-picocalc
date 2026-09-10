@@ -856,6 +856,25 @@ bool file_move(const char *fname, const char *newname)
 	path_parse(buf, sizeof(buf), fname);
 	path_parse(aux, sizeof(aux), newname);
 
+#ifdef PICOCALC
+	/*
+	 * PORT: angband-pico stage 030. FatFs f_rename() returns FR_EXIST when the
+	 * target name is already taken (vendor/ff15/source/ff.c, the "name collision"
+	 * test in f_rename()), so pico-vfs's rename() is not the POSIX one that
+	 * silently replaces. savefile.c depends on the replacing behaviour twice per
+	 * save -- "<name>" to "<name>.old" when an .old survived a crash, and
+	 * "<name>.new" to "<name>" -- so remove the target first.
+	 *
+	 * remove() failing is not itself an error: the usual case is that the target
+	 * does not exist. rename() below reports anything that actually matters.
+	 *
+	 * The strcmp guard is there so that a rename of a name onto itself -- which
+	 * POSIX defines as a successful no-op -- cannot turn into a delete.
+	 */
+	if (strcmp(buf, aux) != 0)
+		(void)remove(aux);
+#endif
+
 	return (rename(buf, aux) == 0);
 }
 
@@ -993,7 +1012,36 @@ ang_file *file_open(const char *fname, file_mode mode, file_type ftype)
 			if (ftype == FTYPE_SAVE) {
 				/* open only if the file does not exist */
 				int fd;
+#ifdef PICOCALC
+				/*
+				 * PORT: angband-pico stage 030. pico-vfs's FAT back end
+				 * ignores O_EXCL outright and maps a bare O_CREAT to
+				 * FatFs FA_OPEN_ALWAYS (filesystem/fat.c file_open()),
+				 * which neither fails on an existing file nor truncates
+				 * it. Left alone, a savefile.c save over a "<name>.new"
+				 * left behind by a crash would appear to succeed while
+				 * writing the new save into the front of the old one and
+				 * leaving the old tail behind -- and savefile.c then
+				 * renames that hybrid over the good savefile.
+				 *
+				 * So the exclusive open is done by hand, keeping upstream
+				 * semantics exactly: refuse if the name is taken, and
+				 * otherwise create at zero length. O_TRUNC is what makes
+				 * pico-vfs pick FA_CREATE_ALWAYS.
+				 *
+				 * This is not a race on this platform. There is one
+				 * process, no threads writing savefiles, and no other
+				 * writer for the card.
+				 */
+				if (file_exists(buf)) {
+					errno = EEXIST;
+					fd = -1;
+				} else {
+					fd = open(buf, O_CREAT | O_TRUNC | O_WRONLY | O_BINARY, S_IRUSR | S_IWUSR);
+				}
+#else
 				fd = open(buf, O_CREAT | O_EXCL | O_WRONLY | O_BINARY, S_IRUSR | S_IWUSR);
+#endif
 				if (fd < 0) {
 					/* there was some error */
 					f->fh = NULL;

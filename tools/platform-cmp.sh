@@ -14,7 +14,7 @@ set -u
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)
 
-files="lcd.c lcd.h font5x10.c font5x10.h southbridge.c southbridge.h keyboard.c keyboard.h sd_fs.c sd_fs.h"
+files="lcd.c lcd.h font5x10.c font5x10.h southbridge.c southbridge.h keyboard.c keyboard.h sd_fs.c sd_fs.h syscalls.c syscalls.h"
 
 checked=0
 same=0

@@ -42,12 +42,23 @@ project(angband_pico C CXX ASM)
 pico_sdk_init()
 
 # pico-vfs supplies <sys/dirent.h> plus opendir/readdir/closedir over the SD card. Without
-# it z-file.c does not compile: newlib's own <dirent.h> is a #error stub. The mount itself
-# is stage 030; the core only needs the header now.
-set(PICO_VFS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../PicoCalc/Code/pico_multi_booter/sd_boot/lib/pico-vfs")
+# it z-file.c does not compile: newlib's own <dirent.h> is a #error stub. Stage 020 needed
+# only the header; stage 030 builds the library too and mounts the card with it.
+#
+# PICOCALC_SD_BOOT_DIR is a cache variable so a different checkout can be pointed at without
+# editing this file, exactly as mothpad/c/pico/CMakeLists.txt does it.
+set(PICOCALC_SD_BOOT_DIR
+    "${CMAKE_CURRENT_SOURCE_DIR}/../PicoCalc/Code/pico_multi_booter/sd_boot"
+    CACHE PATH "Path to the ClockworkPi PicoCalc sd_boot sources, which carry pico-vfs")
+set(PICO_VFS_DIR "${PICOCALC_SD_BOOT_DIR}/lib/pico-vfs")
 if(NOT EXISTS "${PICO_VFS_DIR}/include/sys/dirent.h")
     message(FATAL_ERROR "pico-vfs headers not found at ${PICO_VFS_DIR}/include")
 endif()
+
+# Brings in the blockdevice_*, filesystem_* and blockdevice/filesystem INTERFACE targets.
+# It must come after pico_sdk_init(); pico-vfs's own CMakeLists calls SDK functions.
+# The binary directory is named explicitly because the source tree is outside this project.
+add_subdirectory("${PICO_VFS_DIR}" pico-vfs)
 
 # ---------------------------------------------------------------------------------------
 # The core: the vendored game, Angband commit 00c9414cb filtered per PORT-NOTES.md.
@@ -100,9 +111,15 @@ target_link_libraries(angband_core PUBLIC pico_stdlib_headers)
 # 841d9c56 / picocalc-text-starter (MIT) as their upstream. specifications.md 7.2 requires
 # they stay byte-identical; tools/platform-cmp.sh checks that.
 #
-# psram_heap.c is port-written. keyboard.c arrives in stage 040 and sd_fs.c in stage 030.
+# psram_heap.c, sd_fs.c and syscalls.c are port-written; keyboard.c arrives in stage 040.
+#
+# syscalls.c holds strong _gettimeofday / _getpid / _kill over the SDK's __weak ones. It
+# only wins if the executable references syscalls_init() by name -- the stage 020 _sbrk
+# trap again. See src/platform/syscalls.h.
 add_library(angband_platform STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psram_heap.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/sd_fs.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/syscalls.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/lcd.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/southbridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/font5x10.c
@@ -125,6 +142,15 @@ target_link_libraries(angband_platform PUBLIC
                     # pioasm is a HOST tool and this machine has no host compiler.
     hardware_i2c    # the south bridge, on i2c1
     hardware_psram  # psram_get_size(), and the PSRAM linker region
+
+    # Stage 030. blockdevice_sd and filesystem_fat are what sd_fs.c calls; filesystem_vfs
+    # is the half that matters most, because it is the translation unit carrying _open,
+    # _read, _write, _lseek, _stat, _fstat, rename, mkdir, rmdir, _unlink, opendir, readdir
+    # and closedir. Without it those resolve to newlib's ENOSYS stubs and every z-file.c
+    # call fails at run time with the build still perfectly green.
+    blockdevice_sd
+    filesystem_fat
+    filesystem_vfs
 )
 
 # ---------------------------------------------------------------------------------------
@@ -141,3 +167,73 @@ pico_enable_stdio_usb(angband_psramdiag 1)
 pico_enable_stdio_uart(angband_psramdiag 0)
 
 pico_add_extra_outputs(angband_psramdiag)
+
+# ---------------------------------------------------------------------------------------
+# angband_fsdiag (stage 030) -- the SD card file layer.
+#
+# It does NOT link angband_core. The point is to prove the file layer through the very
+# functions the game calls, so angband_zfile below compiles the five z-*.c units it needs
+# straight from src/game/ and nothing else. A failure is then in pico-vfs, in sd_fs.c, or in
+# z-file.c -- 5 translation units of game code, not 150.
+#
+# z-rand.c is in the list because z-file.c calls Rand_simple() from file_get_tempfile(); the
+# stage plan named four units, and the linker named the fifth.
+#
+# THIS IS AN OBJECT LIBRARY FOR THE SAME REASON angband_core IS, and the reason is the stage
+# 020 correction about CMAKE_C_STANDARD. These sources need gnu99. Setting C_STANDARD 99 on
+# the *executable* also applies it to every SDK source that pico_stdlib and friends inject
+# into that target, and hardware/structs/*.h use C11 static_assert -- the first build of this
+# target died on accessctrl.h and sync.c, exactly as angband_platform did in stage 020. An
+# OBJECT library that links pico_stdlib_headers only takes no injected sources, so gnu99 is
+# safe on it.
+add_library(angband_zfile OBJECT
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-file.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-util.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-virt.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-form.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game/z-rand.c
+)
+
+# The same definitions angband_core uses. z-file.c behaves differently without PICOCALC: it
+# would want the UNIX fcntl file locks and ~ expansion, and it would keep upstream's O_EXCL
+# open() rather than the emulation the stage 030 PORT: edit put behind PICOCALC.
+target_compile_definitions(angband_zfile PUBLIC
+    PICOCALC=1
+    DEFAULT_CONFIG_PATH="/angband/lib/"
+    DEFAULT_LIB_PATH="/angband/lib/"
+    DEFAULT_DATA_PATH="/angband/lib/"
+)
+target_include_directories(angband_zfile PUBLIC
+    ${PICO_VFS_DIR}/include                 # <sys/dirent.h>, ahead of newlib's stub
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+)
+target_compile_options(angband_zfile PRIVATE -w -ffunction-sections -fdata-sections)
+set_target_properties(angband_zfile PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
+target_link_libraries(angband_zfile PUBLIC pico_stdlib_headers)
+
+add_executable(angband_fsdiag
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/fsdiag.c
+    $<TARGET_OBJECTS:angband_zfile>
+)
+
+# fsdiag.c itself compiles at the project default, C11. It needs angband_zfile's include
+# paths and definitions but not its objects a second time, so the usage requirements are
+# taken by hand rather than by linking the OBJECT library.
+target_include_directories(angband_fsdiag PRIVATE
+    ${PICO_VFS_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+)
+target_compile_definitions(angband_fsdiag PRIVATE
+    PICOCALC=1
+    DEFAULT_CONFIG_PATH="/angband/lib/"
+    DEFAULT_LIB_PATH="/angband/lib/"
+    DEFAULT_DATA_PATH="/angband/lib/"
+)
+
+target_link_libraries(angband_fsdiag PRIVATE angband_platform)
+
+# specifications.md 6.5: serial at 115200 and the LCD, both.
+pico_enable_stdio_usb(angband_fsdiag 1)
+pico_enable_stdio_uart(angband_fsdiag 0)
+
+pico_add_extra_outputs(angband_fsdiag)

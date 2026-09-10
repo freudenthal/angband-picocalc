@@ -39,8 +39,9 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 |---|---|
 | `src/game/` | 150 `.c` and 166 `.h` — the whole core. Built for the device. |
 | `src/host/` | Upstream `main.c` and `main-test.c`. **WSL harness only**; never compiled for the device. |
-| `src/platform/` | The platform layer. `lcd.c/.h`, `font5x10.c/.h`, `southbridge.c/.h` copied byte-identical from `../tinyrogue-pico/src/platform/`; `psram_heap.c/.h` port-written. Stage 020. |
+| `src/platform/` | The platform layer. `lcd.c/.h`, `font5x10.c/.h`, `southbridge.c/.h` copied byte-identical from `../tinyrogue-pico/src/platform/`; `psram_heap.c/.h`, `sd_fs.c/.h`, `syscalls.c/.h` port-written. Stages 020, 030. |
 | `src/psramdiag.c` | The stage 020 PSRAM diagnostic. Port-written. |
+| `src/fsdiag.c` | The stage 030 SD filesystem diagnostic. Port-written. |
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
 | `tools/` | The suite and the heap probe. Port-written. |
@@ -87,8 +88,8 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-Two vendored files are edited. Each edit is wrapped in a `PORT:` banner.
-`git diff --stat 2cf1b4a HEAD -- src/game src/host` must list exactly these two.
+Three vendored files are edited. Each edit is wrapped in a `PORT:` banner.
+`git diff --stat 2cf1b4a HEAD -- src/game src/host` must list exactly these three.
 
 ### 1. `src/game/h-basic.h` — the `PICOCALC` platform macro
 
@@ -118,7 +119,30 @@ signals.
 `h-basic.h` (line 31, in the non-autoconf branch). That is harmless: every use of it in
 `z-file.c` is also gated on `UNIX`, so no lock code is compiled.
 
-### 2. `src/host/main-test.c` — three harness probes
+### 2. `src/game/z-file.c` — two pico-vfs semantics differences
+
+Stage 030. pico-vfs's FAT back end is not POSIX in two places that matter to `savefile.c`,
+and both were read out of its source and then confirmed by `src/fsdiag.c` on the device.
+Each edit is inside `#ifdef PICOCALC`, so the host build and every other platform keep
+upstream's code exactly.
+
+**a. `file_open(..., MODE_WRITE, FTYPE_SAVE)` — `O_EXCL` emulated, `O_TRUNC` added.**
+Upstream opens with `O_CREAT | O_EXCL | O_WRONLY`, meaning "create, and fail if the name is
+taken". pico-vfs (`src/filesystem/fat.c`, `file_open()`) never looks at `O_EXCL`, and maps a
+bare `O_CREAT` to FatFs `FA_OPEN_ALWAYS` — which neither fails nor truncates. Left alone, a
+save over a `<name>.new` left behind by a crash would look successful while writing the new
+save into the front of the old one and leaving the old tail behind; `savefile.c` would then
+rename that hybrid over the good savefile. The port does the exclusive check by hand with
+`file_exists()` and adds `O_TRUNC` (which is what makes pico-vfs choose `FA_CREATE_ALWAYS`).
+Upstream semantics are preserved exactly. There is no race: one process, one writer.
+
+**b. `file_move()` — the target is removed before `rename()`.** FatFs `f_rename()` returns
+`FR_EXIST` when the new name is already in use (`vendor/ff15/source/ff.c`, the "name
+collision" test), so pico-vfs's `rename()` does not replace. `savefile.c` depends on
+replacing twice per save. The port calls `remove()` on the target first, guarded by a
+`strcmp` so that renaming a name onto itself cannot turn into a delete.
+
+### 3. `src/host/main-test.c` — three harness probes
 
 `heap?`, `depth?` and `jump N`, plus `#include "cmd-core.h"`. They exist so
 `tools/host-build.sh` can reproduce the heap table in `specifications.md` §7.1 without a
@@ -138,6 +162,8 @@ never write a second LCD driver).
 | `font5x10.c`, `font5x10.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
 | `southbridge.c`, `southbridge.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
 | `psram_heap.c`, `psram_heap.h` | port-written here | 020 |
+| `sd_fs.c`, `sd_fs.h` | port-written here | 030 |
+| `syscalls.c`, `syscalls.h` | port-written here | 030 |
 
 The three copied pairs carry tinyrogue's own `PORT:` banners, which name their upstream
 (Picoware `841d9c56`, whose own upstream is
@@ -156,6 +182,24 @@ in if something references one of its symbols** — an executable that wants the
 must call `psram_heap_stats()` (or another function from that header) at least once.
 `src/psramdiag.c` does, and the link map for `angband_psramdiag` confirms the result: the
 SDK's `.text._sbrk` under "Discarded input sections", and this one at `0x10004fec`.
+
+`syscalls.c` is the same trap in a second place, and stage 030 walked into it deliberately.
+Its `_gettimeofday`, `_getpid` and `_kill` all override `__weak` SDK definitions in the same
+`newlib_interface.c`, so an executable that wants a plausible `time()` must call
+`syscalls_init()` — which does nothing at run time and exists only to be a name the linker
+can see. `src/fsdiag.c` calls it, and its link map shows the SDK's `.text._gettimeofday`
+under "Discarded input sections" with `libangband_platform.a(syscalls.c.obj)` pulled in.
+**Stage 050's `main()` must call both `syscalls_init()` and a `psram_heap.h` function**,
+before the first `mem_alloc` and before anything reads the clock.
+
+`sd_fs.c` needs no such hook: `sd_fs_mount()` is called by name.
+
+The clock `sd_fs.c` asks for is Mothpad's `125000000 / 2 / 4` = 15,625,000 Hz, and it is
+kept as a literal rather than recomputed, so this port runs the card at the rate Mothpad
+already proved on this wiring. It is not the rate the SPI block ends up at: `clk_peri` here
+is 150 MHz, not the 125 MHz that expression assumes, and `spi_set_baudrate()` can only
+divide by an even prescale times a post-divide. `sd_fs_effective_hz()` reads the achieved
+rate back out of the hardware, and that is the number `specifications.md` §6.3 records.
 
 ## Known deviations from a clean `PICOCALC` build
 
