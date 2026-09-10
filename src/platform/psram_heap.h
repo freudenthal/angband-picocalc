@@ -46,6 +46,16 @@ extern "C"
     // The high-water mark of the break, in bytes above base.
     size_t psram_heap_high_water(void);
 
+    // Pull the high-water mark down to the current break.
+    //
+    // This exists for the overhead probe in psramdiag.c and for nothing else. The mark is
+    // monotonic by design, which makes it useless for measuring a second allocation phase:
+    // newlib trims the break back on free() but the mark stays where the first phase left
+    // it, so a later phase that fits underneath shows a delta of zero. Stage 020's probe
+    // measured 0.00 B/alloc on the device for exactly that reason. Reset the mark, then run
+    // the phase, then read the delta.
+    void psram_heap_reset_high_water(void);
+
     // Bytes between the current break and the limit.
     size_t psram_heap_free(void);
 

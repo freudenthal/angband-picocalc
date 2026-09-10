@@ -131,6 +131,12 @@ size_t psram_heap_high_water(void)
     return (size_t)(heap_high_water - heap_base);
 }
 
+void psram_heap_reset_high_water(void)
+{
+    heap_lazy_init();
+    heap_high_water = heap_brk;
+}
+
 size_t psram_heap_free(void)
 {
     heap_lazy_init();
