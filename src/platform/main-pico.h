@@ -35,11 +35,15 @@ extern "C"
     // masked off here exactly as text_hook does.
     uint16_t pico_term_colour(int a);
 
-    // Microseconds spent inside the drawing hooks, and cells painted, between the previous
-    // TERM_XTRA_FRESH and this one -- that is, for one frame. Term_fresh() ends with
-    // TERM_XTRA_FRESH, so these read the frame that just finished. Diagnostics use them to
-    // separate SPI time from ui-term.c's own bookkeeping; nothing in the game does.
+    // Per-frame counters, read after Term_fresh() (which ends with TERM_XTRA_FRESH, so
+    // they describe the frame that just finished). Microseconds inside the three drawing
+    // hooks (text, wipe, TERM_XTRA_CLEAR); microseconds of that inside lcd_blit(); hook
+    // calls; cells painted. Diagnostics use them to separate the SPI transfer from glyph
+    // expansion and from ui-term.c's own bookkeeping; nothing in the game does.
     uint32_t pico_term_last_fresh_us(void);
+    uint32_t pico_term_last_fresh_blit_us(void);
+    uint32_t pico_term_last_fresh_read_us(void);
+    uint32_t pico_term_last_fresh_calls(void);
     uint32_t pico_term_last_fresh_cells(void);
 
 #ifdef __cplusplus

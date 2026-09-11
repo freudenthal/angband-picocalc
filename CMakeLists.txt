@@ -145,6 +145,7 @@ target_link_libraries(angband_platform PUBLIC
     pico_stdlib
     hardware_spi    # the LCD, on spi1. The vendored driver's PIO transport was replaced;
                     # pioasm is a HOST tool and this machine has no host compiler.
+    hardware_dma    # stage 045: lcd.c pushes pixels by DMA (lcd_write16_buf)
     hardware_i2c    # the south bridge, on i2c1
     hardware_psram  # psram_get_size(), and the PSRAM linker region
 
@@ -303,7 +304,9 @@ target_compile_definitions(angband_termdiag PRIVATE
     DEFAULT_DATA_PATH="/angband/lib/"
 )
 
-target_link_libraries(angband_termdiag PRIVATE angband_platform)
+# hardware_dma is for the stage 045 raw transfer probe in termdiag.c, which drives a DMA
+# channel at the PL022 directly to measure that path without editing lcd.c.
+target_link_libraries(angband_termdiag PRIVATE angband_platform hardware_dma)
 
 # specifications.md 6.5: serial at 115200 and the LCD, both.
 pico_enable_stdio_usb(angband_termdiag 1)

@@ -42,10 +42,47 @@ static uint16_t colour_rgb565[MAX_COLORS];
 // width of the term: 64 * 5 * 10 * 2 = 6,400 bytes.
 static uint16_t span_pixels[PICO_TERM_COLS * PICO_CELL_W * PICO_CELL_H];
 
+// One span's code points and their font indices, in SRAM. See Term_text_pico: the
+// wchar_t array ui-term.c hands over lives in the game's heap, which is PSRAM.
+static wchar_t span_cp[PICO_TERM_COLS];
+static uint8_t span_glyph[PICO_TERM_COLS];
+
+// The font, copied into SRAM at init (stage 045).
+//
+// font5x10.c's table is const, so it lives in flash, and the expansion loop reads ten
+// bytes of it per cell -- 20,480 flash reads per full screen. That is cheap while the
+// loop itself is also executing from flash, because instruction fetch keeps the XIP
+// path busy and the font rides along in the same cache. It stops being cheap the moment
+// the loop runs from SRAM, which is where stage 045 put it: the font reads become the
+// only QMI traffic the loop generates, and each one pays for the round trip. Measured:
+// the identical expansion took 4.6 ms on a flash-resident probe and 44 ms in the
+// SRAM-resident hook, a gap of almost exactly ten flash reads per cell.
+//
+// 1,280 bytes buys all of it back. Nothing outside this file uses the copy; lcd.c's own
+// lcd_putc() still reads the flash original, and is not on any hot path here.
+#define PICO_FONT_GLYPHS 128
+static uint8_t font_sram[PICO_FONT_GLYPHS * GLYPH_HEIGHT];
+
+// The glyph row table (stage 045). A glyph row is five bits, so there are 32 possible
+// rows; each entry is that row as five pixels in the current fg/bg. Rebuilt only when
+// fg or bg change, which is at most once per text_hook call and usually not at all.
+// Measured: 2,048 cells expanded in 4.6 ms through the table, 27 ms through the
+// per-pixel branch it replaced.
+static uint16_t row_px[32][PICO_CELL_W];
+static uint16_t row_px_fg = 0xFFFF;
+static uint16_t row_px_bg = 0xFFFF;
+static bool row_px_valid = false;
+
 // Per-frame counters; see main-pico.h.
 static uint32_t paint_us;
+static uint32_t paint_blit_us;
+static uint32_t paint_read_us;
+static uint32_t paint_calls;
 static uint32_t paint_cells;
 static uint32_t last_fresh_us;
+static uint32_t last_fresh_blit_us;
+static uint32_t last_fresh_read_us;
+static uint32_t last_fresh_calls;
 static uint32_t last_fresh_cells;
 
 // The soft cursor. ui-term.c marks the old cursor cell dirty when the cursor moves, so the
@@ -72,7 +109,30 @@ uint16_t pico_term_colour(int a)
 }
 
 uint32_t pico_term_last_fresh_us(void) { return last_fresh_us; }
+uint32_t pico_term_last_fresh_blit_us(void) { return last_fresh_blit_us; }
+uint32_t pico_term_last_fresh_read_us(void) { return last_fresh_read_us; }
+uint32_t pico_term_last_fresh_calls(void) { return last_fresh_calls; }
 uint32_t pico_term_last_fresh_cells(void) { return last_fresh_cells; }
+
+static void row_table_build(uint16_t fg, uint16_t bg)
+{
+    if (row_px_valid && row_px_fg == fg && row_px_bg == bg)
+        return;
+    for (int bits = 0; bits < 32; bits++)
+        for (int i = 0; i < PICO_CELL_W; i++)
+            row_px[bits][i] = (bits & (0x10 >> i)) ? fg : bg;
+    row_px_fg = fg;
+    row_px_bg = bg;
+    row_px_valid = true;
+}
+
+// lcd_blit with the time it took added to the per-frame counter.
+static void blit_timed(uint16_t *pixels, uint16_t x, uint16_t y, uint16_t w, uint16_t h)
+{
+    uint64_t t0 = time_us_64();
+    lcd_blit(pixels, x, y, w, h);
+    paint_blit_us += (uint32_t)(time_us_64() - t0);
+}
 
 // ---------------------------------------------------------------------------------------
 // Drawing.
@@ -103,7 +163,9 @@ static void cursor_erase(void)
  * for a black background -- a term that ignores the field paints the wrong background the
  * first time the game asks for one, and the cost here is a switch.
  */
-static errr Term_text_pico(int x, int y, int n, int a, const wchar_t *s)
+// In SRAM (__not_in_flash_func), for the reason lcd.c's pixel path is: flash and PSRAM
+// share the QMI, and alternating between them costs a chip-select cycle each way.
+static errr __not_in_flash_func(Term_text_pico)(int x, int y, int n, int a, const wchar_t *s)
 {
     if (n <= 0 || y < 0 || y >= PICO_TERM_ROWS || x < 0 || x >= PICO_TERM_COLS)
         return 0;
@@ -124,37 +186,70 @@ static errr Term_text_pico(int x, int y, int n, int a, const wchar_t *s)
 
     const int stride = n * PICO_CELL_W;
 
+    row_table_build(fg, bg);
+
+    // Pass 1: get the span out of PSRAM in one sequential burst, and resolve the font
+    // indices while the characters are in SRAM.
+    //
+    // Doing the lookup inline with the expansion below reads one PSRAM word, then ten
+    // font bytes from flash, then one PSRAM word again -- 2,048 alternations across a
+    // full screen, each costing a QMI chip-select cycle (see lcd.c's note). Stage 045
+    // measured that loop at 53 ms against the 4.6 ms the identical expansion takes when
+    // its input is already in SRAM. memcpy() is the right shape for PSRAM: stage 020
+    // measured 14.29 MB/s sequential and 5.72 MB/s word at a time.
+    //
+    // The ASCII test is inline because pico_utf8_glyph() lives in utf8.c, i.e. in flash,
+    // and calling it per cell would put the alternation back. Every code point the game
+    // draws is ASCII bar the fourteen accented vowels in lib/ (specifications.md 6.4).
+    uint64_t tr0 = time_us_64();
+    memcpy(span_cp, s, (size_t)n * sizeof(wchar_t));
+    paint_read_us += (uint32_t)(time_us_64() - tr0);
+
     for (int i = 0; i < n; i++)
     {
-        int g = pico_utf8_glyph((uint32_t)s[i]);
-        if (g < 0)
-            g = PICO_FALLBACK_GLYPH;
+        uint32_t cp = (uint32_t)span_cp[i];
+        int g;
 
-        const uint8_t *rows = &font_5x10.glyphs[g * GLYPH_HEIGHT];
+        if (cp >= 0x20u && cp < 0x7Fu)
+            g = (int)cp;
+        else
+        {
+            g = pico_utf8_glyph(cp);
+            if (g < 0)
+                g = PICO_FALLBACK_GLYPH;
+        }
+        span_glyph[i] = (uint8_t)g;
+    }
+
+    // Pass 2: expand. SRAM and flash only; no PSRAM is touched below this line.
+    for (int i = 0; i < n; i++)
+    {
+        const uint8_t *rows = &font_sram[span_glyph[i] * GLYPH_HEIGHT];
         uint16_t *cell = span_pixels + i * PICO_CELL_W;
 
         for (int r = 0; r < PICO_CELL_H; r++)
         {
-            uint8_t bits = rows[r];
+            const uint16_t *px = row_px[rows[r] & 0x1F];
             uint16_t *o = cell + r * stride;
 
-            o[0] = (bits & 0x10) ? fg : bg;
-            o[1] = (bits & 0x08) ? fg : bg;
-            o[2] = (bits & 0x04) ? fg : bg;
-            o[3] = (bits & 0x02) ? fg : bg;
-            o[4] = (bits & 0x01) ? fg : bg;
+            o[0] = px[0];
+            o[1] = px[1];
+            o[2] = px[2];
+            o[3] = px[3];
+            o[4] = px[4];
         }
     }
 
-    lcd_blit(span_pixels,
-             (uint16_t)(x * PICO_CELL_W), (uint16_t)(y * PICO_CELL_H),
-             (uint16_t)stride, PICO_CELL_H);
+    blit_timed(span_pixels,
+               (uint16_t)(x * PICO_CELL_W), (uint16_t)(y * PICO_CELL_H),
+               (uint16_t)stride, PICO_CELL_H);
 
     // The blit covers the cursor's underline row if the cursor sat in this span.
     if (cursor_y == y && cursor_x >= x && cursor_x < x + n)
         cursor_forget();
 
     paint_us += (uint32_t)(time_us_64() - t0);
+    paint_calls++;
     paint_cells += (uint32_t)n;
     return 0;
 }
@@ -174,9 +269,9 @@ static void fill_cells(uint16_t colour, int x, int y, int n, int rows)
     for (int i = 0; i < w * h; i++)
         span_pixels[i] = colour;
 
-    lcd_blit(span_pixels,
-             (uint16_t)(x * PICO_CELL_W), (uint16_t)(y * PICO_CELL_H),
-             (uint16_t)w, (uint16_t)h);
+    blit_timed(span_pixels,
+               (uint16_t)(x * PICO_CELL_W), (uint16_t)(y * PICO_CELL_H),
+               (uint16_t)w, (uint16_t)h);
 }
 
 /**
@@ -197,6 +292,7 @@ static errr Term_wipe_pico(int x, int y, int n)
         cursor_forget();
 
     paint_us += (uint32_t)(time_us_64() - t0);
+    paint_calls++;
     paint_cells += (uint32_t)n;
     return 0;
 }
@@ -371,17 +467,69 @@ static errr Term_xtra_pico(int n, int v)
     }
 
     case TERM_XTRA_CLEAR:
+    {
         // ui-term.c calls this from exactly one place: the total_erase branch of
-        // Term_fresh(), which then redraws every cell of every row anyway. So on a term
-        // that covers the whole panel this paints 320x320 pixels that are about to be
-        // painted again. It is kept because it is the documented contract -- ui-term.c:1624
-        // says TERM_XTRA_CLEAR "must erase the entire screen" -- and because a front end
-        // that lies about it would break the moment the term stopped filling the panel.
-        // A band at a time so the SPI window is set 32 times, not 320.
+        // Term_fresh(). That branch then resets every cell of `old` to a white space and
+        // redraws every row -- but Term_fresh_row_text() skips a cell whose `scr` contents
+        // equal its `old` contents, so a cell that holds a WHITE SPACE in scr is never
+        // repainted after a clear. It is relying on this hook having blanked it; that is
+        // what ui-term.c:1624's "must erase the entire screen" is for. Every other cell IS
+        // repainted, as text (any glyph, or a space in a non-white attribute) or wiped (a
+        // space in COLOUR_DARK).
+        //
+        // Stage 040 painted the whole panel here and the redraw then painted it again --
+        // 115 ms of every clearing frame. Stage 045 paints exactly the cells the redraw will
+        // skip: the runs of white spaces in scr, read straight out of the term. On a mostly
+        // blank screen that is most of the panel and the redraw is small; on a full screen
+        // it is nothing and the redraw is everything. Either way the panel is painted once.
+        //
+        // Should a later stage shrink the term so it no longer covers the panel (it does now:
+        // 64 * 5 == 32 * 10 == 320), the margin outside the grid has to be blanked as well.
+        uint64_t t0 = time_us_64();
+        const uint16_t black = colour_rgb565[COLOUR_DARK];
+        uint32_t cells = 0;
+
         cursor_forget();
-        for (int band = 0; band < PICO_TERM_ROWS; band++)
-            fill_cells(colour_rgb565[COLOUR_DARK], 0, band, PICO_TERM_COLS, 1);
+
+        // Each row is copied out of PSRAM in two bursts before it is scanned, for the
+        // reason Term_text_pico gives: fill_cells() below runs from flash and writes
+        // SRAM, so scanning PSRAM cell by cell between calls alternates chip selects.
+        static int scan_a[PICO_TERM_COLS];
+
+        for (int y = 0; y < PICO_TERM_ROWS; y++)
+        {
+            int x = 0;
+
+            memcpy(scan_a, Term->scr->a[y], sizeof(scan_a));
+            memcpy(span_cp, Term->scr->c[y], sizeof(span_cp));
+
+            while (x < PICO_TERM_COLS)
+            {
+                if (span_cp[x] != L' ' || scan_a[x] != COLOUR_WHITE)
+                {
+                    x++;
+                    continue;
+                }
+                int x0 = x;
+                while (x < PICO_TERM_COLS && span_cp[x] == L' ' && scan_a[x] == COLOUR_WHITE)
+                    x++;
+                fill_cells(black, x0, y, x - x0, 1);
+                cells += (uint32_t)(x - x0);
+                paint_calls++;
+            }
+        }
+
+        if (PICO_TERM_COLS * PICO_CELL_W < WIDTH)
+            lcd_solid_rectangle(black, PICO_TERM_COLS * PICO_CELL_W, 0,
+                                WIDTH - PICO_TERM_COLS * PICO_CELL_W, HEIGHT);
+        if (PICO_TERM_ROWS * PICO_CELL_H < HEIGHT)
+            lcd_solid_rectangle(black, 0, PICO_TERM_ROWS * PICO_CELL_H,
+                                WIDTH, HEIGHT - PICO_TERM_ROWS * PICO_CELL_H);
+
+        paint_us += (uint32_t)(time_us_64() - t0);
+        paint_cells += cells;
         return 0;
+    }
 
     case TERM_XTRA_SHAPE:
         // v == 0 hides the cursor. ui-term.c calls this instead of the cursor hook when the
@@ -397,14 +545,21 @@ static errr Term_xtra_pico(int n, int v)
 
     case TERM_XTRA_REACT:
         build_colour_table();
+        row_px_valid = false;
         return 0;
 
     case TERM_XTRA_FRESH:
         // Nothing to flush: lcd_blit writes straight down the SPI bus. Used only to close
         // off the per-frame counters.
         last_fresh_us = paint_us;
+        last_fresh_blit_us = paint_blit_us;
+        last_fresh_read_us = paint_read_us;
+        last_fresh_calls = paint_calls;
         last_fresh_cells = paint_cells;
         paint_us = 0;
+        paint_blit_us = 0;
+        paint_read_us = 0;
+        paint_calls = 0;
         paint_cells = 0;
         return 0;
 
@@ -478,7 +633,10 @@ errr init_pico(void)
     keyboard_init();
     pico_utf8_init();
 
+    memcpy(font_sram, font_5x10.glyphs, sizeof(font_sram));
+
     build_colour_table();
+    row_px_valid = false;
 
     lcd_set_background(colour_rgb565[COLOUR_DARK]);
     lcd_set_foreground(colour_rgb565[COLOUR_WHITE]);

@@ -1465,12 +1465,41 @@ static void Term_fresh_row_both_dblh(int y, int x1, int x2, int *pr_drw)
 }
 
 
+/*
+ * PORT: angband-picocalc stage 045, 2026-09-10. Placement only -- no logic is changed by
+ * this edit, and on every platform but PICOCALC the macro expands to nothing.
+ *
+ * On the RP2350 the flash and the 8 MB PSRAM share one QMI, on chip selects 0 and 1, and
+ * CS1 carries a MAX_SELECT / MIN_DESELECT / COOLDOWN timing contract (the SDK's psram.c
+ * sets it). Switching between the two costs a deselect and a reselect. The port's heap is
+ * PSRAM, so a term window's four planes are PSRAM; Term_fresh_row_text() executes from
+ * flash and reads those planes, which makes every cell it scans an alternation.
+ *
+ * Measured on the device by angband_termdiag: 8,192 words summed from SRAM cost 113 ns
+ * each, from PSRAM sequentially 351 ns, and from PSRAM alternating with flash 7,766 ns --
+ * 22x. Term_fresh() over a 64x32 term spent about 40 ms outside the front end's drawing
+ * hooks, which is 2,048 cells at roughly that rate, against about 4 ms of real work.
+ *
+ * Putting the scan in SRAM leaves the PSRAM reads sequential and removes the alternation.
+ * It costs about 1.5 KB of SRAM, of which the port has 480 KB spare.
+ */
+#ifdef PICOCALC
+/*
+ * Not the SDK's __not_in_flash_func: tools/compile-sweep.sh compiles src/game/ without the
+ * SDK include path, so pico/platform.h is not reachable here. The section name is what the
+ * SDK's linker script places in RAM, and the attribute alone is what that macro expands to.
+ */
+#define PICO_TERM_HOT(f) __attribute__((section(".time_critical." #f))) f
+#else
+#define PICO_TERM_HOT(f) f
+#endif
+
 /**
  * Flush a row of the current window (see "Term_fresh")
  *
  * Display text using "Term_text()" and "Term_wipe()"
  */
-static void Term_fresh_row_text(int y, int x1, int x2)
+static void PICO_TERM_HOT(Term_fresh_row_text)(int y, int x1, int x2)
 {
 	int x;
 
@@ -1709,7 +1738,7 @@ bool smlcurs = true;
  * Currently, the use of "Term->icky_corner" and "Term->soft_cursor"
  * together may result in undefined behavior.
  */
-errr Term_fresh(void)
+errr PICO_TERM_HOT(Term_fresh)(void)
 {
 	int x, y;
 

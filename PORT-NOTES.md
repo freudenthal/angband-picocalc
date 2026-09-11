@@ -88,8 +88,8 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-Three vendored files are edited. Each edit is wrapped in a `PORT:` banner.
-`git diff --stat 2cf1b4a HEAD -- src/game src/host` must list exactly these three.
+Four vendored files are edited. Each edit is wrapped in a `PORT:` banner.
+`git diff --stat 2cf1b4a HEAD -- src/game src/host` must list exactly these four.
 
 ### 1. `src/game/h-basic.h` — the `PICOCALC` platform macro
 
@@ -149,6 +149,52 @@ replacing twice per save. The port calls `remove()` on the target first, guarded
 device. `heapshim_report()` is declared weak, so the binary still runs without the
 `LD_PRELOAD` shim. This file is host-only and never reaches the firmware.
 
+
+### 4. `src/game/ui-term.c` — `Term_fresh` and its row scan run from SRAM
+
+Stage 045. **Placement only. No logic, no control flow and no behaviour is changed**, and on
+every platform except `PICOCALC` the macro expands to nothing at all:
+
+```c
+#ifdef PICOCALC
+#define PICO_TERM_HOT(f) __attribute__((section(".time_critical." #f))) f
+#else
+#define PICO_TERM_HOT(f) f
+#endif
+```
+
+applied to `Term_fresh()` and `Term_fresh_row_text()`.
+
+**Why.** The RP2350's flash and its 8 MB of PSRAM hang off one QMI, on chip selects 0 and 1,
+and CS1 carries a `MAX_SELECT` / `MIN_DESELECT` / `COOLDOWN` timing contract that the SDK's
+`psram.c` programs. Every switch between the two costs a deselect and a reselect. This port's
+heap is PSRAM, so a `term_win`'s four planes are in PSRAM — while `ui-term.c` itself executes
+from flash. `Term_fresh_row_text()` therefore alternates chip selects on **every cell it
+scans**.
+
+It is not a small effect. `angband_termdiag` measured 8,192 words summed three ways:
+
+| Source | Per access |
+|---|---|
+| SRAM | 113 ns |
+| PSRAM, sequential | 351 ns |
+| PSRAM alternating with flash | **7,766 ns** |
+
+A 64x32 `Term_fresh()` was spending about **40 ms** outside the front end's drawing hooks,
+against roughly 4 ms of actual comparing and copying. That is 2,048 cells at very close to the
+alternating rate, and it was the single largest item left in the frame after the LCD transfer
+was fixed.
+
+**Not the SDK's `__not_in_flash_func`.** `tools/compile-sweep.sh` compiles `src/game/` with no
+SDK include path, so `pico/platform.h` is not reachable from a core source. The section name
+is what the SDK's linker script places in RAM, and the bare attribute is all that macro
+expands to, so the effect is identical and the sweep still compiles 150 of 150.
+
+**Cost:** about 1.5 KB of SRAM, of which this port has roughly 480 KB spare.
+
+**If this is ever reverted**, the frame time goes back up by about 36 ms and nothing else
+changes. It is safe to drop on a part where the heap and the code share one memory.
+
 ## The platform layer
 
 `src/platform/` is not vendored from Angband. It is the PicoCalc hardware layer, shared with
@@ -158,7 +204,7 @@ never write a second LCD driver).
 
 | File | Origin | Stage |
 |---|---|---|
-| `lcd.c`, `lcd.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
+| `lcd.c`, `lcd.h` | copied byte-identical from `../tinyrogue-pico/src/platform/`; **changed there by stage 045 and re-copied** | 020, 045 |
 | `font5x10.c`, `font5x10.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
 | `southbridge.c`, `southbridge.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 020 |
 | `psram_heap.c`, `psram_heap.h` | port-written here | 020 |
@@ -172,8 +218,22 @@ The four copied pairs carry tinyrogue's own `PORT:` banners, which name their up
 (Picoware `841d9c56`, whose own upstream is
 https://github.com/BlairLeduc/picocalc-text-starter, MIT) and every change tinyrogue made:
 the PIO transport replaced by hardware SPI on `spi1` at 25 MHz, and `pico/multicore.h`
-dropped. **No further change was made here.** `tools/platform-cmp.sh` is the check — it
+dropped. **Nothing is edited in this tree.** `tools/platform-cmp.sh` is the check — it
 compares every copied file against its source tree and exits non-zero on a difference.
+
+**`lcd.c/.h` were changed by angband-pico's stage 045 (2026-09-10), and the change was
+made in `../tinyrogue-pico/src/platform/` first and copied down.** That is Route A of the
+two the stage plan set out, taken with the user's agreement: the panel, the driver and
+the defect are the same in both ports, so the fix belongs upstream of both, and
+`platform-cmp.sh` stays at 8 of 8 with no deviation to record. The change is the pixel
+transfer — `lcd_write16_buf()` now sends 16-bit frames by DMA in SPI mode 3 instead of
+repacking bytes into a 64-byte buffer and calling `spi_write_blocking()` 3,200 times per
+screen — plus `LCD_BAUDRATE`, which is now chosen per part: **37.5 MHz on the RP2350,
+25 MHz unchanged on the RP2040.** The clock is split because no RP2040 is fitted to the
+PicoCalc today, so raising tinyrogue's would be an untestable change to a shipping port;
+the transfer rewrite is what both parts share. `lcd.c` now needs `hardware_dma`, which
+was added to `angband_platform` here and to `tinyrogue_platform` there. The measurements
+that drove it are in `specifications.md` §6.4.
 `zangband-pico/` had no `src/platform/` when stage 020 ran, and still had none when stage 040
 copied `keyboard.c/.h`, so tinyrogue was the source for all four pairs; when the Zangband
 port reaches its own stage 020, these files and `psram_heap.c/.h` are what it should copy.

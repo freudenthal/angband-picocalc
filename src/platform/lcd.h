@@ -31,12 +31,29 @@ Source: https://github.com/BlairLeduc/picocalc-text-starter
 // LCD interface definitions
 // According to the ST7789P datasheet, the maximum SPI clock speed is 62.5 MHz.
 // However, the controller can handle 75 MHz in practice.
-// PORT: 25 MHz, not 75. 75 MHz was reachable through the PIO transport this driver
-// shipped with; the RP2040's PL022 tops out at half the system clock, and 25 MHz is the
-// rate ClockworkPi's own driver runs this panel at
-// (PicoCalc/Code/picocalc_helloworld/lcdspi/lcdspi.h:7). Raise it in stage 050 if the
-// measured frame time asks for it -- lcd_get_baudrate() reports what was achieved.
-#define LCD_BAUDRATE (25000000) // 25 MHz SPI clock speed
+// PORT: the clock is chosen per part, and 75 MHz is not reachable on either. 75 MHz was
+// a PIO number; the PL022 divides clk_peri by an even prescale times a post-divide, so
+// from the RP2350's 150 MHz the steps are 75, 37.5, 25, 18.75 MHz and from the RP2040's
+// 125 MHz they are 62.5, 31.25, 25, 20.8 MHz. The ST7789P datasheet maximum is 62.5 MHz.
+//
+// RP2350: 37.5 MHz. angband-picocalc stage 045 made the transfer efficient first (see
+// lcd_write16_buf) and only then took the one step up, because at 72 % of the wire a
+// faster clock buys 72 % of the increase. 37.5 MHz drew a clean panel through the
+// PicoCalc ribbon over a full-screen exhibit -- no speckle, no streaks, correct hues.
+//
+// RP2040: 25 MHz, unchanged. That is the rate ClockworkPi's own driver uses
+// (PicoCalc/Code/picocalc_helloworld/lcdspi/lcdspi.h:7) and the rate tinyrogue-pico has
+// always run. The next step up there is 31.25 MHz and no RP2040 is fitted to the
+// PicoCalc today, so raising it would be an untestable change to a shipping port. The
+// transfer rewrite is what both parts share; the clock is not.
+//
+// Either way this is a REQUEST. lcd_get_baudrate() reports what spi_init() settled on,
+// and that is the only number any document records.
+#if PICO_RP2350
+#define LCD_BAUDRATE (37500000) // measured on the panel by angband-picocalc stage 045
+#else
+#define LCD_BAUDRATE (25000000) // tinyrogue-pico's long-standing RP2040 rate
+#endif
 
 // LCD command definitions
 #define LCD_CMD_NOP (0x00)     // no operation
