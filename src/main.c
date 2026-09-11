@@ -106,7 +106,10 @@ static void halt_with(const char *what, const char *detail)
     panel_is_the_terms = false;
     boot_row = 0;
 
-    printf("\n*** %s ***\n", what);
+    // One blank line to separate the box from whatever was on the wire, and nothing
+    // more: boot_say() below does its own printf. The first device run had a printf of
+    // the banner here as well, and the serial log carried "*** Angband quit ***" twice.
+    printf("\n");
     boot_panel_line("", 0);
     boot_say("*** %s ***", what);
 
