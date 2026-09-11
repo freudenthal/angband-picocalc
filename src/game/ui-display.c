@@ -826,7 +826,7 @@ static void update_topbar(game_event_type type, game_event_data *data,
 
 	col += prt_hp_short(row, col);
 	col += prt_sp_short(row, col);
-	col += prt_health_short(row, col);
+	col += prt_health_short(row, col);	
 	col += prt_speed_short(row, col);
 	col += prt_depth_short(row, col);
 	col += prt_title_short(row, col);

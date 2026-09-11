@@ -14,6 +14,13 @@
 #
 # The pico-vfs include directory comes first so that <sys/dirent.h> resolves to pico-vfs's
 # header rather than newlib's #error stub; without it z-file.c is the one unit that fails.
+#
+# src/platform is on the include path from stage 070, for one header: turnlog.h, the turn
+# instrument's declarations. The stage 045 correction is why it is a separate header at all
+# -- a core source cannot include an SDK header, so the declarations are here (nothing but
+# <stdint.h>) and the definitions are in src/platform/turnlog.c. ANGBAND_TURN_LOG is NOT
+# defined here, so every TURNLOG_* macro expands to ((void)0) and the text/data/bss line
+# below is the check that the instrument is absent from the shipped build.
 
 set -u
 
@@ -31,7 +38,7 @@ command -v "$CC" > /dev/null || { echo "compile-sweep: $CC not found after sourc
 [ -d "$PICO_VFS/include" ] || { echo "compile-sweep: pico-vfs headers not at $PICO_VFS/include"; exit 2; }
 
 FLAGS=(-mcpu=cortex-m33 -mthumb -Os -ffunction-sections -fdata-sections -std=gnu99 -DPICOCALC -Wall -c)
-INCLUDES=(-I "$PICO_VFS/include" -I "$PORT/src/game")
+INCLUDES=(-I "$PICO_VFS/include" -I "$PORT/src/game" -I "$PORT/src/platform")
 
 OUT="$PORT/build-sweep"
 rm -rf "$OUT"

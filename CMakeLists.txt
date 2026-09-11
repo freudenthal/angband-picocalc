@@ -32,6 +32,49 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_BUILD_TYPE "MinSizeRel")
 
+# ---------------------------------------------------------------------------------------
+# ANGBAND_TURN_LOG (stage 070) -- the turn-latency instrument. OFF in the shipped build.
+#
+#   cmake -B build-pico2-log -S . ... -DANGBAND_TURN_LOG=ON
+#
+# With it ON, src/platform/turnlog.c prints one line of serial per player command giving
+# the whole-turn time and each of the seven per-step sweeps of the level. With it OFF every
+# TURNLOG_* macro in src/platform/turnlog.h is ((void)0), turnlog.c is an empty translation
+# unit, and tools/compile-sweep.sh's text/data/bss line does not move -- which is the check
+# that the instrument is not in the thing it measures.
+#
+# READ THIS BEFORE COMPARING A LOGGED NUMBER WITH A SHIPPED ONE. They are different
+# binaries. Stage 060 moved a boot time by 17 % with a 2,617-byte .text edit that touched
+# nothing on the measured path (specifications.md 12), so the instrument's own footprint is
+# worth more than several of the wins stage 070 is chasing. The logged build is for
+# RELATIVE comparisons within one binary; an absolute claim about the shipped build has to
+# be taken on the shipped build.
+#
+# Build it into a SEPARATE tree, never by reconfiguring build-pico2: the placement
+# experiment (stage 070 item 8) needs the shipped binary to stay byte-stable.
+option(ANGBAND_TURN_LOG "Stage 070: per-turn latency log on serial" OFF)
+
+# ANGBAND_TEXT_PAD (stage 070 item 8) -- the placement experiment.
+#
+#   cmake -B build-pico2-pad2k -S . ... -DANGBAND_TEXT_PAD=2048
+#
+# Bytes of dead space inserted immediately before the bulk of flash .text, so that four
+# otherwise identical binaries sit at four different alignments. 0 is the default and the
+# shipped build; the link is then byte-equivalent to one without the override.
+#
+# WHY THIS EXISTS. Stage 060 edited only layout -- no parser source, byte-identical
+# gamedata -- and the boot came down 17 %, from 278,571 ms to 230,438 ms. The only thing
+# that changed for the parser was its flash address. Until that swing is bounded, every
+# "we got N % from X" in this stage is meaningless unless N is much larger than it.
+#
+# THE PERIOD IS 8 KB AND IS DERIVED, NOT GUESSED: hardware/xip_cache.h gives
+# XIP_CACHE_SIZE 16 KB and XIP_CACHE_LINE_SIZE 8 B, and hardware/regs/xip.h's
+# XIP_CTRL_SPLIT_WAYS describes setting it as partitioning the cache into "two half-sized
+# direct-mapped regions" -- so at its reset value of 0 the cache is two-way set
+# associative, 1,024 sets of 8 B per way, and the set index is address bits [12:3]. Four
+# points across one period are 0, 2 KB, 4 KB and 6 KB.
+set(ANGBAND_TEXT_PAD 0 CACHE STRING "Stage 070 item 8: bytes of .text pad before the game")
+
 # The board. Never pico2 or pico2_w: those are the RP2350A with 4 MB flash.
 set(PICO_BOARD pimoroni_pico_plus2_w_rp2350 CACHE STRING "Board type")
 
@@ -72,6 +115,11 @@ add_library(angband_core OBJECT ${ANGBAND_GAME_SOURCES})
 target_include_directories(angband_core PUBLIC
     ${PICO_VFS_DIR}/include                 # <sys/dirent.h>, ahead of newlib's stub
     ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+    # Stage 070, for one header: src/platform/turnlog.h. A core source cannot include an
+    # SDK header (the stage 045 correction -- tools/compile-sweep.sh compiles src/game/
+    # with no SDK include path), so the turn instrument's declarations live in a header
+    # that needs nothing but <stdint.h> and its definitions live in turnlog.c.
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform
 )
 
 # PICOCALC is the platform macro: h-basic.h keeps UNIX undefined for it, which keeps pwd.h,
@@ -95,6 +143,10 @@ target_compile_definitions(angband_core PUBLIC
     DEFAULT_LIB_PATH="/angband/lib/"
     DEFAULT_DATA_PATH="/angband/lib/"
 )
+
+if(ANGBAND_TURN_LOG)
+    target_compile_definitions(angband_core PUBLIC ANGBAND_TURN_LOG=1)
+endif()
 
 # -w here; tools/compile-sweep.sh is the build that runs with -Wall and counts warnings.
 target_compile_options(angband_core PRIVATE -w -ffunction-sections -fdata-sections)
@@ -332,9 +384,15 @@ pico_add_extra_outputs(angband_termdiag)
 # main-pico.c and utf8.c are sources on the executable rather than members of
 # angband_platform, for the reason angband_termdiag gives above: they include core headers,
 # and angband_platform is also linked by two diagnostics that have no ui-term.c.
+#
+# turnlog.c (stage 070) is here and not in angband_platform for the same reason: it reads
+# pico_term_last_fresh_us() out of main-pico.c. It is compiled unconditionally and is an
+# empty translation unit unless ANGBAND_TURN_LOG is set, which keeps it in
+# tools/port-warnings.sh's list either way.
 add_executable(angband
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/main-pico.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/turnlog.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/utf8.c
     $<TARGET_OBJECTS:angband_core>
 )
@@ -352,6 +410,7 @@ target_compile_definitions(angband PRIVATE
     DEFAULT_CONFIG_PATH="/angband/lib/"
     DEFAULT_LIB_PATH="/angband/lib/"
     DEFAULT_DATA_PATH="/angband/lib/"
+    $<$<BOOL:${ANGBAND_TURN_LOG}>:ANGBAND_TURN_LOG=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
@@ -371,6 +430,15 @@ target_compile_definitions(angband PRIVATE
 # level, which is the number a later stage should trim this to. 64 KB of 520 KB.
 pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_SOURCE_DIR}/src/link
     FILES sections_stack.incl section_end.incl)
+
+# The third override (stage 070 item 8) is GENERATED, because it carries a number CMake
+# substitutes. It lives in the build tree, so the two paths are given in order and the SDK
+# searches both. See src/link/default_text_excludes.incl.in for what it does and why only
+# one override is needed rather than the two the stage plan's table lists.
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/link/default_text_excludes.incl.in
+               ${CMAKE_CURRENT_BINARY_DIR}/link-gen/default_text_excludes.incl @ONLY)
+pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_BINARY_DIR}/link-gen
+    FILES default_text_excludes.incl)
 target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
 
 # pico_rand for the RNG seed: specifications.md 6.3 says time() here is boot time plus a

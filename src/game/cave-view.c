@@ -26,6 +26,16 @@
 #include "player-timed.h"
 #include "trap.h"
 
+/*
+ * PORT: angband-picocalc stage 070, 2026-09-10. Measurement only -- no logic is changed by
+ * anything in this file, and with ANGBAND_TURN_LOG unset every TURNLOG_* macro below is
+ * ((void)0) and the object is byte-identical to the unedited one.
+ *
+ * Three of stage 070's seven per-step sweeps of the 13,068-grid level are here. See
+ * src/platform/turnlog.h.
+ */
+#include "turnlog.h"
+
 /**
  * Approximate distance between two points.
  *
@@ -885,10 +895,14 @@ void update_view(struct chunk *c, struct player *p)
 	struct loc grid;
 
 	/* Record the current view */
+	TURNLOG_MARK(tl_was);			/* PORT: stage 070, sweep 1 */
 	mark_wasseen(c);
+	TURNLOG_ACC(TURNLOG_WASSEEN, tl_was);	/* PORT: stage 070 */
 
 	/* Calculate light levels */
+	TURNLOG_MARK(tl_lit);			/* PORT: stage 070, sweep 2 */
 	calc_lighting(c, p);
+	TURNLOG_ACC(TURNLOG_LIGHTING, tl_lit);	/* PORT: stage 070 */
 
 	/* Assume we can view the player grid */
 	sqinfo_on(square(c, p->grid)->info, SQUARE_VIEW);
@@ -908,6 +922,7 @@ void update_view(struct chunk *c, struct player *p)
 		square_forget(c, p->grid);
 	}
 
+	TURNLOG_MARK(tl_upd);			/* PORT: stage 070, sweep 3 */
 	for (grid.y = 0; grid.y < c->height; grid.y++) {
 		for (grid.x = 0; grid.x < c->width; grid.x++) {
 			/*
@@ -920,6 +935,7 @@ void update_view(struct chunk *c, struct player *p)
 			update_one(c, grid, p);
 		}
 	}
+	TURNLOG_ACC(TURNLOG_UPDVIEW, tl_upd);	/* PORT: stage 070 */
 }
 
 

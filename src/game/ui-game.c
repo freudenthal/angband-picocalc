@@ -60,6 +60,18 @@
 #include "ui-store.h"
 #include "ui-target.h"
 #include "ui-wizard.h"
+
+/*
+ * PORT: angband-picocalc stage 070, 2026-09-10. Measurement only -- no logic is changed,
+ * and with ANGBAND_TURN_LOG unset both TURNLOG_* macros below are ((void)0).
+ *
+ * This is the only place in the tree where one player command is exactly one iteration:
+ * play_game()'s loop is pre_turn_refresh(); cmd_get_hook(); run_game_loop(). The blocking
+ * wait for a key is inside cmd_get_hook() and therefore outside the bracket, and the
+ * printf is in turnlog_end() and therefore after run_game_loop() has returned. See
+ * src/platform/turnlog.h.
+ */
+#include "turnlog.h"
 #include "z-file.h"
 #include "z-util.h"
 #include "z-virt.h"
@@ -970,7 +982,9 @@ void play_game(enum game_mode_type mode)
 		while (!player->is_dead && player->upkeep->playing) {
 			pre_turn_refresh();
 			cmd_get_hook(CTX_GAME);
+			TURNLOG_BEGIN();		/* PORT: stage 070 */
 			run_game_loop();
+			TURNLOG_END(player->depth, turn);	/* PORT: stage 070 */
 		}
 
 		/* Close game on death or quitting */

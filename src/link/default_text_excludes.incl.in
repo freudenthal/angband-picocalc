@@ -1,0 +1,29 @@
+/* PORT: angband-picocalc stage 070. Overrides pico-sdk 2.3.0's one-line
+   pico_standard_link/script_include/default_text_excludes.incl, through the SDK's own
+   pico_add_linker_script_override_path(). CMake substitutes @ANGBAND_TEXT_PAD@ and writes
+   the result into the build tree; see CMakeLists.txt.
+
+   THE PAD IS FOR STAGE 070 ITEM 8, THE PLACEMENT EXPERIMENT. Stage 060 moved the boot time
+   by 17 % while editing only user-interface layout, and the only thing that changed for the
+   parser was its flash address (specifications.md 12). This inserts a deliberate hole
+   immediately before the bulk of flash .text, so that four otherwise identical binaries can
+   be booted at four different alignments and the swing measured. With the pad at 0 -- the
+   default, and what the shipped build uses -- this file is byte-equivalent to the SDK's.
+
+   THE PERIOD IS 8 KB, DERIVED FROM THE SDK HEADERS AND NOT GUESSED. The stage plan's open
+   question asked for the XIP cache's set mapping and proposed 1/2/4 KB as a guess.
+   hardware/xip_cache.h gives XIP_CACHE_SIZE 16 KB and XIP_CACHE_LINE_SIZE 8 B, and
+   hardware/regs/xip.h's XIP_CTRL_SPLIT_WAYS says setting it "partitions the cache into two
+   half-sized direct-mapped regions" -- so with SPLIT_WAYS at its reset value of 0, which is
+   what this port runs, the cache is TWO-WAY set associative: 8 KB per way, 8 B per line,
+   1,024 sets. The set index is therefore address bits [12:3] and the mapping repeats every
+   8 KB. Four points across one period are 0, 2 KB, 4 KB and 6 KB.
+
+   The same file is where item 3 adds the hot objects to the EXCLUDE_FILE list. Note that
+   only ONE override is needed for that, not the two the stage plan's deliverable table
+   lists: the SDK's section_default_data.incl already gathers `*(.text*)` and `*(.rodata*)`
+   into the .data output section, which is `> RAM AT> RAM_STORE`. Anything excluded here
+   lands in SRAM by that existing catch-all. */
+
+. = . + @ANGBAND_TEXT_PAD@;
+*(EXCLUDE_FILE(*libgcc.a: *libc.a: *lib*_a-mem*.o *libm.a:) .text*)

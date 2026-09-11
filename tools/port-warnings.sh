@@ -14,11 +14,16 @@
 # port. The build tree already knows the right one.
 #
 # Requires angband-pico/build-pico2 to be configured and built at least once.
+#
+# Stage 070: the build tree can be named, so the same check runs over the ANGBAND_TURN_LOG
+# build where src/platform/turnlog.c is not an empty translation unit:
+#
+#   PORT_WARNINGS_BUILD=build-pico2-log angband-pico/tools/port-warnings.sh
 
 set -u
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-B="$PORT/build-pico2"
+B="$PORT/${PORT_WARNINGS_BUILD:-build-pico2}"
 
 if [ ! -f "$B/build.ninja" ]; then
 	echo "port-warnings: no $B/build.ninja -- configure the build tree first"
@@ -30,7 +35,8 @@ src/platform/main-pico.c
 src/platform/utf8.c
 src/platform/psram_heap.c
 src/platform/sd_fs.c
-src/platform/syscalls.c"
+src/platform/syscalls.c
+src/platform/turnlog.c"
 
 python - "$B" "$FILES" <<'PYEOF'
 import os, re, subprocess, sys

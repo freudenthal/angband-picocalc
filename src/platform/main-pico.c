@@ -15,6 +15,7 @@
 #include "keyboard.h"
 #include "lcd.h"
 #include "main-pico.h"
+#include "turnlog.h"
 #include "utf8.h"
 
 #include "ui-event.h"
@@ -417,6 +418,12 @@ static errr check_events(bool wait)
     kbd_event_t e;
     bool got = false;
 
+    // PORT: stage 070. This loop is the only place the program can block on the keyboard,
+    // so it is the only place a turn's wall clock can contain time that is not the game's
+    // fault. turnlog_end() subtracts what is reported here. With ANGBAND_TURN_LOG unset
+    // both macros are ((void)0).
+    TURNLOG_MARK(tl_idle);
+
     for (;;)
     {
         keyboard_poll();
@@ -432,6 +439,9 @@ static errr check_events(bool wait)
 
         sleep_ms(1);
     }
+
+    if (wait)
+        TURNLOG_IDLE(tl_idle);
 
     return got ? 0 : 1;
 }
@@ -539,8 +549,14 @@ static errr Term_xtra_pico(int n, int v)
         return 0;
 
     case TERM_XTRA_DELAY:
+        // PORT: stage 070. A deliberate visual pause the game asked for, not computation.
+        // It is counted as idle so a turn that animates does not read as a slow turn.
         if (v > 0)
+        {
+            TURNLOG_MARK(tl_delay);
             sleep_ms((uint32_t)v);
+            TURNLOG_IDLE(tl_delay);
+        }
         return 0;
 
     case TERM_XTRA_REACT:

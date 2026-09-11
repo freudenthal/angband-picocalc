@@ -39,6 +39,16 @@
 #include "trap.h"
 #include "z-queue.h"
 
+/*
+ * PORT: angband-picocalc stage 070, 2026-09-10. Measurement only -- no logic is changed by
+ * anything in this file, and with ANGBAND_TURN_LOG unset every TURNLOG_* macro below is
+ * ((void)0) and the object is byte-identical to the unedited one.
+ *
+ * Four of stage 070's seven per-step sweeps of the 13,068-grid level are here, plus the
+ * two containers the leaves are read against. See src/platform/turnlog.h.
+ */
+#include "turnlog.h"
+
 uint16_t daycount = 0;
 uint32_t seed_randart;		/* Consistent random artifacts */
 uint32_t seed_flavor;		/* Consistent object colors */
@@ -656,7 +666,9 @@ void process_world(struct chunk *c)
 	/* Update noise and scent (not if resting) */
 	if (!player_is_resting(player)) {
 		make_noise(player, NULL, NULL);
+		TURNLOG_MARK(tl_scent);			/* PORT: stage 070, sweep 6 */
 		update_scent();
+		TURNLOG_ACC(TURNLOG_SCENT, tl_scent);	/* PORT: stage 070 */
 	}
 
 
@@ -681,6 +693,7 @@ void process_world(struct chunk *c)
 		equip_learn_after_time(player);
 
 	/* Decrease trap timeouts */
+	TURNLOG_MARK(tl_traps);			/* PORT: stage 070, sweep 7 */
 	for (y = 0; y < c->height; y++) {
 		for (x = 0; x < c->width; x++) {
 			struct loc grid = loc(x, y);
@@ -701,6 +714,7 @@ void process_world(struct chunk *c)
 			}
 		}
 	}
+	TURNLOG_ACC(TURNLOG_TRAPS, tl_traps);	/* PORT: stage 070 */
 
 
 	/*** Involuntary Movement ***/
@@ -1030,7 +1044,9 @@ void run_game_loop(void)
 		event_signal(EVENT_ANIMATE);
 		
 		/* Process monster with even more energy first */
+		TURNLOG_MARK(tl_mon1);			/* PORT: stage 070 */
 		process_monsters(player->energy + 1);
+		TURNLOG_ACC(TURNLOG_MONSTERS, tl_mon1);	/* PORT: stage 070 */
 		if (player->is_dead || !player->upkeep->playing ||
 			player->upkeep->generate_level)
 			break;
@@ -1059,10 +1075,12 @@ void run_game_loop(void)
 			return;
 		else if (!player->upkeep->generate_level) {
 			/* Process the rest of the monsters */
+			TURNLOG_MARK(tl_mon0);			/* PORT: stage 070 */
 			process_monsters(0);
 
 			/* Mark all monsters as ready to act when they have the energy */
 			reset_monsters();
+			TURNLOG_ACC(TURNLOG_MONSTERS, tl_mon0);	/* PORT: stage 070 */
 
 			/* Refresh */
 			notice_stuff(player);
@@ -1073,7 +1091,9 @@ void run_game_loop(void)
 
 			/* Process the world every ten turns */
 			if (!(turn % 10) && !player->upkeep->generate_level) {
+				TURNLOG_MARK(tl_world);			/* PORT: stage 070 */
 				process_world(cave);
+				TURNLOG_ACC(TURNLOG_WORLD, tl_world);	/* PORT: stage 070 */
 
 				/* Refresh */
 				notice_stuff(player);
@@ -1100,7 +1120,9 @@ void run_game_loop(void)
 				}
 			}
 
+			TURNLOG_MARK(tl_gen);			/* PORT: stage 070, item 9 */
 			prepare_next_level(player);
+			TURNLOG_ACC(TURNLOG_GEN, tl_gen);	/* PORT: stage 070 */
 			on_new_level();
 
 			player->upkeep->generate_level = false;
@@ -1121,7 +1143,9 @@ void run_game_loop(void)
 			event_signal(EVENT_ANIMATE);
 
 			/* Process monster with even more energy first */
+			TURNLOG_MARK(tl_mon1);			/* PORT: stage 070 */
 			process_monsters(player->energy + 1);
+			TURNLOG_ACC(TURNLOG_MONSTERS, tl_mon1);	/* PORT: stage 070 */
 			if (player->is_dead || !player->upkeep->playing ||
 				player->upkeep->generate_level)
 				break;
@@ -1172,6 +1196,13 @@ void make_noise(struct player *p, const struct loc *origin,
 	int d;
 	uint16_t noise_increment = (falloff)
 		? *falloff : (p->timed[TMD_COVERTRACKS] ? 4 : 1);
+	/*
+	 * PORT: stage 070, sweep 5. The mark is above q_new() on purpose: that call mallocs
+	 * and frees cave->height * cave->width ints -- 52,276 bytes of PSRAM -- on every
+	 * player step, and item 5 of the stage plan wants to see what that costs before
+	 * hoisting it.
+	 */
+	TURNLOG_MARK(tl_noise);
 	struct queue *queue = q_new(cave->height * cave->width);
 
 	/*
@@ -1181,8 +1212,19 @@ void make_noise(struct player *p, const struct loc *origin,
 	p->noise_grid = next;
 	p->noise_falloff = noise_increment;
 
+	/*
+	 * PORT: stage 070. Sweeps 4 and 5 are kept disjoint by closing the make_noise
+	 * bracket here and reopening it below, so the two figures add up rather than
+	 * nesting.
+	 */
+	TURNLOG_ACC(TURNLOG_NOISE, tl_noise);
+
 	/* Set all the grids to silence */
+	TURNLOG_MARK(tl_forget);		/* PORT: stage 070, sweep 4 */
 	forget_noise();
+	TURNLOG_ACC(TURNLOG_FORGET, tl_forget);	/* PORT: stage 070 */
+
+	TURNLOG_MARK(tl_flood);			/* PORT: stage 070, sweep 5 resumed */
 
 	/* Player makes noise */
 	cave->noise.grids[next.y][next.x] = 0;
@@ -1230,6 +1272,7 @@ void make_noise(struct player *p, const struct loc *origin,
 	}
 
 	q_free(queue);
+	TURNLOG_ACC(TURNLOG_NOISE, tl_flood);	/* PORT: stage 070 */
 }
 
 

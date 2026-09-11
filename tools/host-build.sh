@@ -36,7 +36,7 @@ B="$PORT/build-host"
 rm -rf "$B"
 mkdir -p "$B/obj"
 
-CFLAGS="-O1 -g -std=gnu99 -DUSE_TEST -DHAVE_DIRENT_H -DHAVE_STAT -DHAVE_MKDIR -DHAVE_FCNTL_H -w -I$PORT/src/game"
+CFLAGS="-O1 -g -std=gnu99 -DUSE_TEST -DHAVE_DIRENT_H -DHAVE_STAT -DHAVE_MKDIR -DHAVE_FCNTL_H -w -I$PORT/src/game -I$PORT/src/platform"
 
 echo "host-build: compiling"
 start=$SECONDS

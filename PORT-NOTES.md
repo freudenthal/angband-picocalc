@@ -91,14 +91,19 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-**Fourteen** vendored files are edited. Each edit is wrapped in a `PORT:` banner; every
+**Seventeen** vendored files are edited. Each edit is wrapped in a `PORT:` banner; every
 hunk of `git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`.
 
 Four of them are the platform, the file layer, the host harness and one SRAM placement
-(sections 1 to 4). The other ten are stage 060's 64-column layout (section 5), and **every
-one of those is conditional on `Term->wid < 80`**, so at 80 columns the code that runs is
+(sections 1 to 4). Ten are stage 060's 64-column layout (section 5), and **every one of
+those is conditional on `Term->wid < 80`**, so at 80 columns the code that runs is
 upstream's. That is not an assertion: `tools/host-build.sh` runs the end-to-end tests at 80
 columns and `tools/screen-sweep.sh` renders thirty-two screens at 80 and at 64 side by side.
+
+The other three are stage 070's turn instrument (section 6). **They are guarded by a
+compile option and not by a width, and with the option off they generate no code at all** —
+`tools/compile-sweep.sh` reports the same `text 769928 data 20182 bss 77138` before and
+after, and the linked game is the same 896,540 B of FLASH and 190,912 B of RAM.
 
 ```
 git diff --stat 2cf1b4a HEAD -- src/game src/host
@@ -247,6 +252,30 @@ them: what upstream puts side by side, they put one above the other.
 | `ui-death.c` | The death menu goes at `Term->wid - 17`; at upstream's column 51 its longest entry runs to 66. |
 | `ui-input.c` | A short form of the character-name prompt, which is 54 columns and has the name typed after it. |
 | `ui-init.c` | **The only one not conditional on width.** `plog("Main window is too small")` is `#ifndef PICOCALC`. It fired on every boot, the game walked straight past it — it is a `plog()`, not a `quit()` — and stage 050 lost several minutes to it mid-session because it reads like a blocker. Now that every screen has a 64-column layout the warning is wrong. The guard is on the platform and not on `Term->wid` because on a front end that can be resized the warning is still true: a user who has dragged a window to 64 columns can undo it, and a soldered 320x320 panel cannot. |
+
+### 6. `cave-view.c`, `game-world.c` and `ui-game.c` — the stage 070 turn instrument
+
+Stage 070. Measurement only: **no logic changes anywhere in these three files**, and with
+`ANGBAND_TURN_LOG` unset every `TURNLOG_*` macro is `((void)0)`. The declarations are in
+`src/platform/turnlog.h`, which needs nothing but `<stdint.h>` — a core source cannot
+include an SDK header (stage 045: `tools/compile-sweep.sh` compiles `src/game/` with no SDK
+include path) — and the definitions are in `src/platform/turnlog.c`.
+
+| File | What is bracketed |
+|---|---|
+| `ui-game.c` | `TURNLOG_BEGIN()` / `TURNLOG_END(player->depth, turn)` around `run_game_loop()` in `play_game()`. **This is the only place in the tree where one player command is exactly one iteration**: the loop is `pre_turn_refresh(); cmd_get_hook(CTX_GAME); run_game_loop();`, so the blocking wait for a key is in `cmd_get_hook()` and outside the bracket, and the `printf` is in `turnlog_end()` and therefore after `run_game_loop()` has returned. |
+| `cave-view.c` | Three of the seven per-step sweeps: `mark_wasseen()` and `calc_lighting()` at their call sites inside `update_view()`, and the `update_view` main loop. |
+| `game-world.c` | Four more: `forget_noise()` and the `make_noise()` flood (kept **disjoint** by closing the `make_noise` bracket before `forget_noise()` and reopening it after), `update_scent()` and the trap-timeout loop in `process_world()`. Plus three containers: `process_world()` itself, all four `process_monsters()`/`reset_monsters()` call sites in `run_game_loop()`, and `prepare_next_level()`. |
+
+`src/platform/main-pico.c` is edited too — it is port-written, not vendored, so it is not
+one of the seventeen. `check_events(wait)` is the only place this program can block on the
+keyboard and `TERM_XTRA_DELAY` the only place it deliberately sleeps; both report through
+`turnlog_idle()`, and `turnlog_end()` subtracts the total. Without that a turn's wall clock
+would be mostly the player's thinking time.
+
+**The mark for `make_noise` is deliberately above `q_new()`**, because that call mallocs and
+frees `cave->height * cave->width` ints — 52,276 bytes of PSRAM — on every player step, and
+stage 070 item 5 wants the cost measured before it is hoisted.
 
 **The data files are 64 columns too.** `lib/screens/news.txt` is re-drawn (its colour markup
 counts against the line length, so the art had to lose about sixteen columns and the quote
