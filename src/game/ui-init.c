@@ -73,8 +73,24 @@ void textui_init(void)
 		Term_activate(term_screen);
 
 		/* Verify minimum size */
+		/*
+		 * PORT: stage 060. Not on the PicoCalc, where 64x32 is the panel and there is
+		 * nothing to make bigger.
+		 *
+		 * This fired on every boot and the game walked straight past it -- it is a
+		 * plog(), not a quit(). Stage 050 lost several minutes to it mid-session
+		 * because it reads like a blocker. Now that every screen has a 64-column
+		 * layout, the warning is not just unhelpful, it is wrong.
+		 *
+		 * The guard is on the platform and not on Term->wid, because on a front end
+		 * that can be resized the warning is still true and still worth printing: a
+		 * user who has dragged a window down to 64 columns has done something they can
+		 * undo, and a soldered 320x320 panel is not.
+		 */
+#ifndef PICOCALC
 		if ((Term->hgt < 24) || (Term->wid < 80))
 			plog("Main window is too small - please make it bigger.");
+#endif
 
 		/* Turn off the cursor */
 		(void)Term_set_cursor(false);

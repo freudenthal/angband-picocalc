@@ -1,0 +1,245 @@
+# screens.in -- stdin script for build-host/angband-test -mtest, run by
+# tools/screen-sweep.sh at two term widths. It walks the screens stage 050 listed as
+# suspect and dumps each one with the "screen?" probe added to src/host/main-test.c.
+#
+# Timing rule (specifications.md section 6.6): "key" pushes its keypress at the *next*
+# TERM_XTRA_EVENT, and the command on the following line is read at that same event --
+# before the game has acted on the key. So every capture is "key X", then "noop" to let
+# the key be consumed and the screen redrawn, then "screen? tag".
+#
+# Birth here is Human Mage, not the heap probe's Human Warrior, because a Mage has mana
+# and a spell list and a Warrior has neither, and both are on the stage's list.
+#
+#   space         past the splash
+#   a             race: Human -- 'a' is already the cursor row, so one press selects
+#   b, enter      class: Mage -- 'b' only MOVES the cursor; Enter is what selects
+#   a             roller: point-based (cursor row again, one press)
+#   enter         accept the point buy
+#   enter         accept the default name
+#   enter         accept the character history
+#   enter         past the final confirmation, into the town
+#
+# screen-sweep.sh clears lib/save first; a leftover savefile inserts an extra
+# "Overwrite it? [y/n]" prompt and every key after it lands one screen early.
+
+size?
+screen? splash
+
+key space
+noop
+screen? birth-race
+
+key a
+noop
+screen? birth-class
+
+key b
+noop
+key enter
+noop
+screen? birth-roller
+
+key a
+noop
+screen? birth-points
+
+key enter
+noop
+screen? birth-name
+
+key enter
+noop
+screen? birth-history
+
+key enter
+noop
+screen? birth-confirm
+
+key enter
+noop
+noop
+noop
+screen? town-default
+
+# The character sheet. 'C' opens it, 'h' steps through its pages, ESC leaves.
+key C
+noop
+screen? charsheet-1
+
+key h
+noop
+screen? charsheet-2
+
+key h
+noop
+screen? charsheet-3
+
+key escape
+noop
+noop
+
+# Inventory, equipment and the spell list.
+key i
+noop
+screen? inventory
+
+key escape
+noop
+key e
+noop
+screen? equipment
+
+key escape
+noop
+key b
+noop
+screen? book-choice
+
+key a
+noop
+screen? spell-browse
+
+key escape
+noop
+key escape
+noop
+noop
+
+# Knowledge menus: the top menu, the object list, the monster list, and a store's
+# contents -- which is ui-store.c's own display, reached without walking to a shop.
+key ~
+noop
+screen? knowledge-menu
+
+key enter
+noop
+screen? knowledge-objects
+
+key escape
+noop
+key e
+noop
+key enter
+noop
+screen? knowledge-monsters
+
+key escape
+noop
+key escape
+noop
+key m
+noop
+key enter
+noop
+key escape
+noop
+screen? knowledge-store
+
+key escape
+noop
+key escape
+noop
+key escape
+noop
+noop
+
+# The options menu, which is where the sidebar mode is cycled ('o').
+key =
+noop
+screen? options-menu
+
+key escape
+noop
+noop
+
+# Help.
+key ?
+noop
+screen? help-index
+
+key escape
+noop
+key escape
+noop
+noop
+
+# The other sidebar modes over the town map. "sidebar" sets the mode and runs
+# do_cmd_redraw(); the two noops give the game loop a turn to repaint. The run is started
+# in the device's own mode with "-b1", so "town-default" above is already SIDEBAR_TOP at
+# 64 columns and SIDEBAR_LEFT at 80.
+sidebar 0
+noop
+noop
+screen? town-sidebar-left
+
+sidebar 1
+noop
+noop
+screen? town-sidebar-top
+
+sidebar 2
+noop
+noop
+screen? town-sidebar-none
+
+sidebar 0
+noop
+noop
+
+# A dungeon level, so the sidebar carries a depth and a level feeling.
+jump 10
+key ,
+key ,
+key ,
+key ,
+noop
+screen? dungeon-default
+
+sidebar 0
+noop
+noop
+screen? dungeon-sidebar-left
+
+sidebar 0
+noop
+noop
+
+# The death screen. 'Q' retires the character, which is the only deterministic way to
+# reach lib/screens/retire.txt and the tombstone layout; dying on a deep level is not.
+# The verification is the literal '@' sign, not y/n. It is done back in the town, because
+# on a dungeon level a monster's "-more-" lands between the prompt and its answer and eats
+# the keypress -- which is a fair description of what makes device sessions expensive too.
+jump 0
+key ,
+key ,
+key ,
+key ,
+noop
+noop
+key escape
+noop
+sidebar 1
+noop
+noop
+key Q
+noop
+screen? retire-prompt
+
+key y
+noop
+screen? retire-verify
+
+key @
+noop
+noop
+screen? retire-tomb
+
+key enter
+noop
+screen? retire-next-1
+
+key enter
+noop
+screen? retire-next-2
+
+quit

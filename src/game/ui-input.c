@@ -1150,7 +1150,15 @@ bool get_character_name(char *buf, size_t buflen)
 	event_signal(EVENT_MESSAGE_FLUSH);
 
 	/* Display prompt */
-	prt("Enter a name for your character (* for a random name): ", 0, 0);
+	/*
+	 * PORT: stage 060. The full prompt is 54 columns and askfor_aux_ext() types the name
+	 * after it, so on a 64-column term a name of more than ten characters scrolls off
+	 * the right edge while it is being typed. The short form leaves 43.
+	 */
+	if (Term->wid < 80)
+		prt("Name ('*' for a random one): ", 0, 0);
+	else
+		prt("Enter a name for your character (* for a random name): ", 0, 0);
 
 	/* Save the player name */
 	my_strcpy(buf, player->full_name, buflen);

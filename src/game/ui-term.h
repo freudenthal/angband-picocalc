@@ -254,7 +254,18 @@ extern int row_top_map[SIDEBAR_MAX];
 extern int row_bottom_map[SIDEBAR_MAX];
 extern int col_map[SIDEBAR_MAX];
 
-#define ROW_MAP	(row_top_map[Term->sidebar_mode])
+/*
+ * PORT: stage 060. Under 80 columns SIDEBAR_TOP's top bar is three rows rather than two,
+ * because upstream's two-row version overflows 64 columns once a stat reaches 18/100 --
+ * see the PORT: note on update_topbar() in ui-display.c. The status line then sits on row
+ * 4 and the map starts one row lower. Everything derived from the map's top row goes
+ * through this macro (SCREEN_ROWS, ui-map.c, ui-target.c, ui-command.c,
+ * Term_get_first_tile_row), so this is the only place that has to know.
+ *
+ * At 80 columns and wider, and in the other two sidebar modes, the value is upstream's.
+ */
+#define ROW_MAP	(row_top_map[Term->sidebar_mode] + \
+	(((Term->sidebar_mode == SIDEBAR_TOP) && (Term->wid < 80)) ? 1 : 0))
 #define ROW_BOTTOM_MAP (row_bottom_map[Term->sidebar_mode])
 #define COL_MAP	(col_map[Term->sidebar_mode])
 

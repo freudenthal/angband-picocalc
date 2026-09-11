@@ -100,16 +100,40 @@ bool arg_force_name;
  * ------------------------------------------------------------------------
  * Quickstart? screen.
  * ------------------------------------------------------------------------ */
+/*
+ * PORT: stage 060. Centre a prompt on the bottom row without ever asking for a negative
+ * column.
+ *
+ * Upstream writes prt(prompt, Term->hgt - 1, Term->wid / 2 - strlen(prompt) / 2). For a
+ * 71-character prompt on a 64-column term that is -3, and a negative column is not an
+ * error anybody sees: Term_gotoxy() rejects it, prt() carries on, and the line is drawn
+ * wherever the cursor already happened to be -- in the middle of the stat table, on the
+ * point-buy screen, and spliced on to the end of the history on the confirmation screen.
+ * The same defect put the whole splash screen in one cell; see ui-display.c.
+ *
+ * The port shortens the three long prompts as well, so at 64 they fit rather than being
+ * clipped at the right edge. At 80 the column is positive and this is prt() exactly.
+ */
+static void prt_centred_prompt(const char *prompt, int len)
+{
+	int col = (int)(Term->wid / 2) - len / 2;
+
+	prt(prompt, Term->hgt - 1, (col < 0) ? 0 : col);
+}
+
 static enum birth_stage textui_birth_quickstart(void)
 //phantom name change changes
 {
-	const char *prompt = "['Y': use as is; 'N': redo; 'C': change name/history; '=': set birth options]";
+	/* PORT: stage 060. Shorter under 80 columns; see prt_centred(). */
+	const char *prompt = (Term->wid < 80)
+		? "['Y' use as is; 'N' redo; 'C' name/history; '=' options]"
+		: "['Y': use as is; 'N': redo; 'C': change name/history; '=': set birth options]";
 
 	enum birth_stage next = BIRTH_QUICKSTART;
 
 	/* Prompt for it */
 	prt("New character based on previous one:", 0, 0);
-	prt(prompt, Term->hgt - 1, Term->wid / 2 - strlen(prompt) / 2);
+	prt_centred_prompt(prompt, (int)strlen(prompt));
 
 	do {
 		/* Get a key */
@@ -629,6 +653,23 @@ static void clear_question(void)
 	"'{light green}={/}' for the birth options, '{light green}?{/}' " \
 	"for help, or '{light green}Ctrl-X{/}' to quit."
 
+/*
+ * PORT: stage 060. The same instructions, said shortly enough to fit.
+ *
+ * The block above wraps into four rows at 80 columns and the question the menus are
+ * asking goes on QUESTION_ROW, which is 7. At 64 it wraps into five, so the fifth --
+ * "help, or 'Ctrl-X' to quit." -- is overwritten by the question the moment the race menu
+ * appears. The three static menu regions are laid out from TABLE_ROW at compile time, so
+ * moving the table down a row reaches further than rewording does; and every key named
+ * here is also in the help file that '?' opens.
+ */
+#define BIRTH_MENU_HELPTEXT_NARROW \
+	"{light blue}Please select your character traits below:{/}\n\n" \
+	"{light green}Movement keys{/} scroll, {light green}Enter{/} selects, " \
+	"'{light green}*{/}' picks at random, '{light green}@{/}' finishes at random, " \
+	"'{light green}ESC{/}' steps back, '{light green}={/}' birth options, " \
+	"'{light green}?{/}' help, '{light green}Ctrl-X{/}' quits."
+
 /**
  * Show the birth instructions on an otherwise blank screen
  */	
@@ -645,7 +686,10 @@ static void print_menu_instructions(void)
 	Term_gotoxy(QUESTION_COL, HEADER_ROW);
 	
 	/* Display some helpful information */
-	text_out_e(BIRTH_MENU_HELPTEXT);
+	if (Term->wid < 80)
+		text_out_e(BIRTH_MENU_HELPTEXT_NARROW);	/* PORT: stage 060 */
+	else
+		text_out_e(BIRTH_MENU_HELPTEXT);
 	
 	/* Reset text_out() indentation */
 	text_out_indent = 0;
@@ -792,7 +836,27 @@ static enum birth_stage menu_question(enum birth_stage current,
 	
 	/* Print the question currently being asked. */
 	clear_question();
-	Term_putstr(QUESTION_COL, QUESTION_ROW, -1, COLOUR_YELLOW, menu_data->hint);
+	if (Term->wid < 80) {
+		/*
+		 * PORT: stage 060. Two rows for the hint under 80 columns.
+		 *
+		 * "Choose how to generate your intrinsic stats. Point-based is recommended."
+		 * is 71 characters and the race hint is 71 too, so at 64 both were clipped
+		 * mid-word by Term_putstr(). clear_question() already clears QUESTION_ROW
+		 * through TABLE_ROW and birth_menu_handler() already treats QUESTION_ROW + 1
+		 * as part of the hint, so the second row is upstream's own allowance.
+		 */
+		text_out_hook = text_out_to_screen;
+		text_out_indent = QUESTION_COL;
+		text_out_wrap = Term->wid;
+		Term_gotoxy(QUESTION_COL, QUESTION_ROW);
+		text_out_c(COLOUR_YELLOW, "%s", menu_data->hint);
+		text_out_wrap = 0;
+		text_out_indent = 0;
+	} else {
+		Term_putstr(QUESTION_COL, QUESTION_ROW, -1, COLOUR_YELLOW,
+					menu_data->hint);
+	}
 
 	current_menu->cmd_keys = "?=*@\x18";	 /* ?, =, *, @, <ctl-X> */
 
@@ -903,7 +967,7 @@ static enum birth_stage roller_command(bool first_call)
 	strnfcat(prompt, sizeof (prompt), &promptlen, " or 'Enter' to accept]");
 
 	/* Prompt for it */
-	prt(prompt, Term->hgt - 1, Term->wid / 2 - promptlen / 2);
+	prt_centred_prompt(prompt, (int)promptlen);	/* PORT: stage 060 */
 	
 	/* Get the response. */
 	in = inkey_m();
@@ -1004,9 +1068,16 @@ static enum birth_stage roller_command(bool first_call)
  * ------------------------------------------------------------------------ */
 
 /* The locations of the "costs" area on the birth screen. */
-#define COSTS_ROW 2
-#define COSTS_COL (42 + 32)
-#define TOTAL_COL (42 + 19)
+/*
+ * PORT: stage 060. These are offsets from the character sheet's stat table, which
+ * ui-player.c moves from row 2, column 42 to row 9, column 26 under 80 columns. The Cost
+ * column would otherwise be at 74 and the total at 61, so at 64 the per-stat costs were
+ * gone and "Total Cost: 20/20" read "Tot".
+ */
+#define BIRTH_STAT_COL ((Term->wid < 80) ? 26 : 42)
+#define COSTS_ROW ((Term->wid < 80) ? 9 : 2)
+#define COSTS_COL (BIRTH_STAT_COL + 32)
+#define TOTAL_COL (BIRTH_STAT_COL + 19)
 
 /*
  * Remember what's possible for a given stat.  0 means can't buy or sell.
@@ -1073,7 +1144,10 @@ static void point_based_points(game_event_type type, game_event_data *data,
 
 static void point_based_start(void)
 {
-	const char *prompt = "[up/down to move, left/right to modify, 'r' to reset, 'Enter' to accept]";
+	/* PORT: stage 060. Shorter under 80 columns; see the note on prt_centred() below. */
+	const char *prompt = (Term->wid < 80)
+		? "[up/down move, left/right modify, 'r' reset, 'Enter' accept]"
+		: "[up/down to move, left/right to modify, 'r' to reset, 'Enter' to accept]";
 	int i;
 
 	/* Clear */
@@ -1083,7 +1157,7 @@ static void point_based_start(void)
 	display_player_xtra_info();
 	display_player_stat_info();
 
-	prt(prompt, Term->hgt - 1, Term->wid / 2 - strlen(prompt) / 2);
+	prt_centred_prompt(prompt, (int)strlen(prompt));
 
 	for (i = 0; i < STAT_MAX; ++i) {
 		buysell[i] = 0;
@@ -1545,13 +1619,16 @@ static enum birth_stage get_history_command(void)
  * ------------------------------------------------------------------------ */
 static enum birth_stage get_confirm_command(void)
 {
-	const char *prompt = "['ESC' to step back, 'S' to start over, or any other key to continue]";
+	/* PORT: stage 060. Shorter under 80 columns; see prt_centred(). */
+	const char *prompt = (Term->wid < 80)
+		? "['ESC' back, 'S' start over, any other key to continue]"
+		: "['ESC' to step back, 'S' to start over, or any other key to continue]";
 	struct keypress ke;
 
 	enum birth_stage next = BIRTH_RESET;
 
 	/* Prompt for it */
-	prt(prompt, Term->hgt - 1, Term->wid / 2 - strlen(prompt) / 2);
+	prt_centred_prompt(prompt, (int)strlen(prompt));
 
 	/* Get a key */
 	ke = inkey();

@@ -751,6 +751,59 @@ static bool glyph_command(ui_event ke, bool *glyph_picker_ptr,
 	return false;
 }
 
+/*
+ * PORT: stage 060. Every knowledge list puts its right-hand columns at fixed positions
+ * chosen for an 80-column term: the header at 46, the object list's Ignore at 46,
+ * Inscribed at 55 and symbol at 76, the monster list's symbol at 64, kills at 68 and
+ * "fully known" at 75, the feature and trap lists' four lighting symbols at 65, and the
+ * visual-mode readout ending at 64. On a 64-column term every one of those past column 63
+ * is thrown away by Term_putstr() without a word, which is how the object list arrived at
+ * "Ignore  Inscribed" and nothing else.
+ *
+ * They all move left together, by exactly the number of columns the term is short of 80,
+ * so the block keeps its internal spacing and the header still sits over its data. The
+ * left-hand group and name columns are laid out from g_name_len and are not touched.
+ *
+ * At 80 columns and wider this returns its argument, so the upstream layout is unchanged.
+ */
+static int know_col(int col)
+{
+	int shift = 80 - Term->wid;
+
+	if (shift <= 0) return col;
+	col -= shift;
+	return (col < 0) ? 0 : col;
+}
+
+
+/*
+ * PORT: stage 060. Draw a list entry's name, clipped to the room before the right-hand
+ * block when that block has moved left.
+ *
+ * c_prt() does not clip, and upstream does not need it to: at 80 columns the object list
+ * has 33 columns of name before "Ignore" and the monster list 42 before its symbol, which
+ * is more than any name in lib/gamedata. With the block shifted left by know_col() there
+ * are 16 and 26, and "Wormtongue, Agent of Saruman" ran straight over the symbol column.
+ * Clipping is by code point, not by byte, so a multi-byte name cannot be cut in half.
+ */
+static void know_prt_name(uint8_t attr, const char *name, int row, int col, int limit)
+{
+	if (Term->wid >= 80) {
+		c_prt(attr, name, row, col);
+		return;
+	}
+
+	if (limit > 0 && utf8_strlen(name) > (size_t)limit) {
+		char buf[80];
+
+		my_strcpy(buf, name, sizeof(buf));
+		utf8_clipto(buf, limit);
+		c_prt(attr, buf, row, col);
+	} else {
+		c_prt(attr, name, row, col);
+	}
+}
+
 static void display_group_member(struct menu *menu, int oid,
 						bool cursor, int row, int col, int wid)
 {
@@ -773,7 +826,8 @@ static void display_group_member(struct menu *menu, int oid,
 		char buf[12];
 
 		strnfmt(buf, sizeof(buf), "%d/%ld", a, (long int)c);
-		c_put_str(attr, buf, row, 64 - (int) strlen(buf));
+		/* PORT: stage 060, know_col(). */
+		c_put_str(attr, buf, row, know_col(64) - (int) strlen(buf));
 	}
 }
 
@@ -929,7 +983,8 @@ static void display_knowledge(const char *title, int *obj_list, int o_count,
 			prt("Name", 4, g_name_len + 3);
 
 			if (otherfields)
-				prt(otherfields, 4, 46);
+				/* PORT: stage 060, know_col(). */
+				prt(otherfields, 4, know_col(46));
 
 
 			/* Print dividers: horizontal and vertical */
@@ -973,16 +1028,24 @@ static void display_knowledge(const char *title, int *obj_list, int o_count,
 
 		/* Print prompt */
 		{
+			/*
+			 * PORT: stage 060. The long form of this line is 78 columns for the
+			 * object list, so at 64 it ended "...'r'ec" and the player lost the
+			 * inscribe key. The short form is 54 and says the same things.
+			 */
+			bool narrow = (Term->wid < 80);
 			const char *pedit = (!o_funcs.xattr) ? "" :
 					(!(attr_idx|char_idx) ?
-					 ", 'c' to copy" : ", 'c', 'p' to paste");
+					 (narrow ? ", 'c'opy" : ", 'c' to copy") :
+					 (narrow ? ", 'c','p'aste" : ", 'c', 'p' to paste"));
 			const char *xtra = o_funcs.xtra_prompt ?
 				o_funcs.xtra_prompt(oid) : "";
 			const char *pvs = "";
 
 			if (tile_picker) pvs = ", ENTER to accept";
 			else if (glyph_picker) pvs = ", 'i' to insert, ENTER to accept";
-			else if (o_funcs.xattr) pvs = ", 'v' for visuals";
+			else if (o_funcs.xattr)
+				pvs = narrow ? ", 'v'isuals" : ", 'v' for visuals";
 
 			prt(format("<dir>%s%s%s, ESC", pvs, pedit, xtra), hgt - 1, 0);
 		}
@@ -1194,23 +1257,24 @@ static void display_monster(int col, int row, bool cursor, int oid)
 		a = COLOUR_VIOLET;
 
 	/* Display the name */
-	c_prt(attr, race->name, row, col);
+	/* PORT: stage 060, know_col() and know_prt_name(). */
+	know_prt_name(attr, race->name, row, col, know_col(64) - col - 1);
 
 	/* Display symbol */
-	big_pad(64, row, a, c);
+	big_pad(know_col(64), row, a, c);
 
 	/* Display kills */
 	if (!race->rarity) {
-		put_str(format("%s", "shape"), row, 68);
+		put_str(format("%s", "shape"), row, know_col(68));
 	} else if (rf_has(race->flags, RF_UNIQUE)) {
 		put_str(format("%s", (race->max_num == 0)?  " dead" : "alive"),
-				row, 68);
+				row, know_col(68));
 	} else {
-		put_str(format("%5d", lore->pkills), row, 68);
+		put_str(format("%5d", lore->pkills), row, know_col(68));
 	}
 
 	/* Display if fully known */
-	put_str((lore->all_known) ? "yes" : "no", row, 75);
+	put_str((lore->all_known) ? "yes" : "no", row, know_col(75));
 }
 
 static int m_cmp_race(const void *a, const void *b)
@@ -1916,20 +1980,21 @@ static void display_object(int col, int row, bool cursor, int oid)
 		my_strcat(o_name, " {tried}", sizeof(o_name));
 
 	/* Display the name */
-	c_prt(attr, o_name, row, col);
+	/* PORT: stage 060, know_col() and know_prt_name(). */
+	know_prt_name(attr, o_name, row, col, know_col(46) - col - 1);
 
 	/* Show ignore status */
 	if ((aware && kind_is_ignored_aware(kind)) ||
 		(!aware && kind_is_ignored_unaware(kind)))
-		c_put_str(attr, "Yes", row, 46);
+		c_put_str(attr, "Yes", row, know_col(46));
 
 
 	/* Show autoinscription if around */
 	if (inscrip)
-		c_put_str(COLOUR_YELLOW, inscrip, row, 55);
+		c_put_str(COLOUR_YELLOW, inscrip, row, know_col(55));
 
 	if (tile_height == 1) {
-		big_pad(76, row, a, c);
+		big_pad(know_col(76), row, a, c);
 	}
 }
 
@@ -2058,8 +2123,13 @@ static const char *o_xtra_prompt(int oid)
 {
 	struct object_kind *kind = objkind_byid(oid);
 
-	const char *no_insc = ", 's' to toggle ignore, 'r'ecall, '{'";
-	const char *with_insc = ", 's' to toggle ignore, 'r'ecall, '{', '}'";
+	/* PORT: stage 060. Short forms under 80 columns; see the prompt in display_knowledge(). */
+	const char *no_insc = (Term->wid < 80)
+		? ", 's'ignore, 'r'ecall, '{'"
+		: ", 's' to toggle ignore, 'r'ecall, '{'";
+	const char *with_insc = (Term->wid < 80)
+		? ", 's'ignore, 'r'ecall, '{', '}'"
+		: ", 's' to toggle ignore, 'r'ecall, '{', '}'";
 
 	if (!kind) return NULL;
 
@@ -2199,7 +2269,7 @@ static void display_rune(int col, int row, bool cursor, int oid )
 
 	/* Show autoinscription if around */
 	if (inscrip)
-		c_put_str(COLOUR_YELLOW, inscrip, row, 47);
+		c_put_str(COLOUR_YELLOW, inscrip, row, know_col(47));	/* PORT: stage 060 */
 }
 
 
@@ -2352,7 +2422,7 @@ static void display_feature(int col, int row, bool cursor, int oid )
 
 	if (tile_height == 1) {
 		/* Display symbols */
-		col = 65;
+		col = know_col(65);	/* PORT: stage 060 */
 		col += big_pad(col, row, feat_x_attr[LIGHTING_DARK][feat->fidx],
 					   feat_x_char[LIGHTING_DARK][feat->fidx]);
 		col += big_pad(col, row, feat_x_attr[LIGHTING_LIT][feat->fidx],
@@ -2515,7 +2585,7 @@ static void display_trap(int col, int row, bool cursor, int oid )
 
 	if (tile_height == 1) {
 		/* Display symbols */
-		col = 65;
+		col = know_col(65);	/* PORT: stage 060 */
 		col += big_pad(col, row, trap_x_attr[LIGHTING_DARK][trap->tidx],
 				trap_x_char[LIGHTING_DARK][trap->tidx]);
 		col += big_pad(col, row, trap_x_attr[LIGHTING_LIT][trap->tidx],

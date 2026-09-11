@@ -1203,6 +1203,23 @@ static struct object *item_menu(cmd_code cmd, int prompt_size, int mode)
 	if (area.col <= 3)
 		area.col = 0;
 	ex_offset = MIN(max_len, (size_t)(Term->wid - 1 - ex_width - area.col));
+	/*
+	 * PORT: stage 060. The extra fields -- weight, price, fail chance -- are drawn by
+	 * show_obj() at col + ex_offset, and the col it is given is not area.col but
+	 * area.col + 3, because ui-menu.c's display_menu_row() prints the "a) " tag first
+	 * and advances past it. Upstream's arithmetic leaves that out, so whenever the name
+	 * field is wide enough to be the binding term the last three characters of the last
+	 * extra field fall off the right edge. At 80 there is slack and nothing shows; at 64
+	 * the inventory's weights read "3.0 l" and the equipment's "4.0".
+	 *
+	 * Width-conditional, so the 80-column layout is byte-for-byte upstream's.
+	 */
+	if (Term->wid < 80) {
+		int room = Term->wid - ex_width - area.col - 3;
+
+		if (room < 0) room = 0;
+		ex_offset = MIN(max_len, (size_t)room);
+	}
 	while (strlen(header) < max_len + ex_width + ex_offset_ctr) {
 		my_strcat(header, " ", sizeof(header));
 		if (strlen(header) > sizeof(header) - 2) break;

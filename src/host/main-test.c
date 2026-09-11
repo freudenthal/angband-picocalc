@@ -23,6 +23,8 @@
 #include "main.h"
 #include "player.h"
 #include "player-birth.h"
+/* PORT: stage 060, for do_cmd_redraw() in c_sidebar(). */
+#include "ui-command.h"
 #include "ui-game.h"
 
 #ifdef USE_TEST
@@ -44,6 +46,10 @@ static void c_key(char *rest) {
 		nextkey = ' ';
 	} else if (streq(rest, "enter")) {
 		nextkey = '\n';
+	/* PORT: stage 060. ESCAPE leaves every screen the layout sweep visits. */
+	} else if (streq(rest, "escape") || streq(rest, "esc")) {
+		nextkey = ESCAPE;
+	/* PORT: end */
 	} else if (rest[0] == 'C' && rest[1] == '-') {
 		nextkey = KTRL(rest[2]);
 	} else {
@@ -145,6 +151,68 @@ static void c_jump(char *rest) {
 	cmd_set_arg_choice(cmdq_peek(), "choice", 0);
 	printf("jump: queued %d\n", n);
 }
+
+/*
+ * PORT: stage 060. Three more probes, for the 64-column layout work.
+ *
+ *   screen? [tag]  dump the whole Term grid as text, one "SCR|" line per row, trailing
+ *                  blanks stripped. This is the capture the stage's run log is written
+ *                  from: a screen that has been read but not dumped is not a record.
+ *                  Non-ASCII cells print as '?' -- the device folds them to ASCII anyway
+ *                  (specifications.md section 6.4) and this harness has no font.
+ *   sidebar N      set angband_term[0]->sidebar_mode (0 Left, 1 Top, 2 None) and force a
+ *                  full redraw, so a script can compare the three without the options menu.
+ *   size?          print the term size, so a capture carries the geometry it was taken at.
+ *
+ * The term size itself comes from "-s WxH" on the -mtest argument list; it defaults to
+ * 80x24 so every pre-existing test under tests/ is unaffected.
+ */
+static void c_screen(char *rest) {
+	int w, h, x, y;
+	char line[256];
+
+	Term_get_size(&w, &h);
+	printf("screen: %s %dx%d\n", rest ? rest : "-", w, h);
+
+	for (y = 0; y < h; y++) {
+		int last = -1;
+
+		for (x = 0; x < w && x < (int)sizeof(line) - 1; x++) {
+			int a = 0;
+			wchar_t c = 0;
+
+			if (Term_what(x, y, &a, &c) != 0) c = L' ';
+			line[x] = (c >= 32 && c < 127) ? (char)c : (c == 0 || c == L' ') ? ' ' : '?';
+			if (line[x] != ' ') last = x;
+		}
+		line[last + 1] = '\0';
+		printf("SCR|%s|\n", line);
+	}
+	printf("screen: end\n");
+}
+
+static void c_sidebar(char *rest) {
+	int n = rest ? atoi(rest) : 0;
+
+	if (n < 0 || n >= SIDEBAR_MAX) n = SIDEBAR_LEFT;
+	SIDEBAR_MODE = n;
+	printf("sidebar: %d\n", n);
+	/*
+	 * Setting the mode is not enough: ui-options.c's own 'o' command relies on the
+	 * screen_load() after it to repaint, and nothing here does that. do_cmd_redraw()
+	 * is what Ctrl-R runs and is the same path.
+	 */
+	if (player && player->upkeep && player->upkeep->playing) {
+		do_cmd_redraw();
+	}
+}
+
+static void c_size(char *rest) {
+	int w, h;
+
+	Term_get_size(&w, &h);
+	printf("size: %dx%d\n", w, h);
+}
 /* PORT: end */
 
 typedef struct {
@@ -165,6 +233,10 @@ static test_cmd cmds[] = {
 	{ "heap?", c_heap },
 	{ "depth?", c_depth },
 	{ "jump", c_jump },
+	/* PORT: stage 060 */
+	{ "screen?", c_screen },
+	{ "sidebar", c_sidebar },
+	{ "size?", c_size },
 	/* PORT: end */
 
 	{ "player-birth", c_player_birth },
@@ -319,10 +391,22 @@ static errr term_text_test(int x, int y, int n, int a, const wchar_t *s) {
 	return 0;
 }
 
+/*
+ * PORT: stage 060. The term geometry, set by "-s WxH". 80x24 is upstream's and is what
+ * every test under tests/ runs at; the port's device term is 64x32.
+ */
+static int term_wid = 80;
+static int term_hgt = 24;
+
+/* PORT: stage 060, "-b N" sets the initial sidebar mode; the device's default is 1. */
+static int term_sidebar = SIDEBAR_LEFT;
+
 static void term_data_link(int i) {
 	term *t = &td.t;
 
-	term_init(t, 80, 24, 256);
+	term_init(t, term_wid, term_hgt, 256);
+	/* PORT: stage 060. term_init() leaves this at SIDEBAR_LEFT; "-b N" overrides it. */
+	t->sidebar_mode = term_sidebar;
 
 	t->init_hook = term_init_test;
 	t->nuke_hook = term_nuke_test;
@@ -339,7 +423,7 @@ static void term_data_link(int i) {
 	angband_term[i] = t;
 }
 
-const char help_test[] = "Test mode, subopts -p(rompt)";
+const char help_test[] = "Test mode, subopts -p(rompt) -s(ize) WxH -b(sidebar) N";
 
 errr init_test(int argc, char *argv[]) {
 	int i;
@@ -350,6 +434,31 @@ errr init_test(int argc, char *argv[]) {
 			prompt = 1;
 			continue;
 		}
+		/* PORT: stage 060, "-s WxH" sets the term geometry. */
+		if (prefix(argv[i], "-s")) {
+			int w = 0, h = 0;
+
+			if (sscanf(argv[i] + 2, "%dx%d", &w, &h) == 2 &&
+					w >= 20 && w <= 255 && h >= 10 && h <= 255) {
+				term_wid = w;
+				term_hgt = h;
+				continue;
+			}
+			printf("init-test: bad size '%s'\n", argv[i]);
+			continue;
+		}
+		/* PORT: stage 060, "-b N" sets the initial sidebar mode. */
+		if (prefix(argv[i], "-b")) {
+			int b = atoi(argv[i] + 2);
+
+			if (b >= 0 && b < SIDEBAR_MAX) {
+				term_sidebar = b;
+				continue;
+			}
+			printf("init-test: bad sidebar mode '%s'\n", argv[i]);
+			continue;
+		}
+		/* PORT: end */
 		printf("init-test: bad argument '%s'\n", argv[i]);
 	}
 

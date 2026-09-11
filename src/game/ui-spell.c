@@ -102,16 +102,28 @@ static void spell_menu_display(struct menu *m, int oid, bool cursor,
 		attr = COLOUR_RED;
 	}
 
+	/*
+	 * PORT: stage 060. A 24-column name field under 80 columns, not 30.
+	 *
+	 * The menu is Term->wid - 15 wide and loses three more to the "a) " tag, so the row
+	 * has Term->wid - 18 columns: 46 at 64. The name field, the "%2d %4d %3d%%" block
+	 * and the longest comment (" difficult") come to 52, so at 64 the comment was
+	 * clipped to "dif" and the header's "Info" to "Inf". Six columns off the name field
+	 * brings it to 46 exactly, and no spell name in lib/gamedata/class.txt is longer
+	 * than 24 characters.
+	 */
+	int name_wid = (Term->wid < 80) ? 24 : 30;
+
 	/* Dump the spell --(-- */
 	u8len = utf8_strlen(spell->name);
-	if (u8len < 30) {
+	if (u8len < (size_t)name_wid) {
 		strnfmt(out, sizeof(out), "%s%*s", spell->name,
-			(int)(30 - u8len), " ");
+			(int)(name_wid - u8len), " ");
 	} else {
 		char *name_copy = string_make(spell->name);
 
-		if (u8len > 30) {
-			utf8_clipto(name_copy, 30);
+		if (u8len > (size_t)name_wid) {
+			utf8_clipto(name_copy, name_wid);
 		}
 		my_strcpy(out, name_copy, sizeof(out));
 		string_free(name_copy);
@@ -247,6 +259,9 @@ static struct menu *spell_menu_new(const struct object *obj,
 
 	/* Set flags */
 	m->header = "Name                             Lv Mana Fail Info";
+	/* PORT: stage 060. The narrow header, over a 24-column name field. */
+	if (Term->wid < 80)
+		m->header = "Name                       Lv Mana Fail Info";
 	m->flags = MN_CASELESS_TAGS | MN_KEYMAP_ESC;
 	m->selections = all_letters_nohjkl;
 	m->browse_hook = spell_menu_browser;

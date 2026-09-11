@@ -1,22 +1,24 @@
 Symbols On Your Map
 ===================
 
-Symbols on your map can be broken down into three categories: Features of
-the dungeon such as walls, floor, doors, and traps; Objects which can be
-picked up such as treasure, weapons, magical devices, etc; and creatures
-which may or may not move about the dungeon, but are mostly harmful to your
-character's well being.
+Symbols on your map can be broken down into three categories:
+Features of the dungeon such as walls, floor, doors, and traps;
+Objects which can be picked up such as treasure, weapons,
+magical devices, etc; and creatures which may or may not move
+about the dungeon, but are mostly harmful to your character's
+well being.
 
-Some symbols are used to represent more than one type of entity, and some
-symbols are used to represent entities in more than one category. The "@"
-symbol (by default) is used to represent the character.
+Some symbols are used to represent more than one type of entity,
+and some symbols are used to represent entities in more than one
+category. The "@" symbol (by default) is used to represent the
+character.
 
-It will not be necessary to remember all of the symbols and their meanings.
-The "slash" command ('/') will identify any character appearing on your
-map (see 'commands.txt').
+It will not be necessary to remember all of the symbols and
+their meanings. The "slash" command ('/') will identify any
+character appearing on your map (see 'commands.txt').
 
-Note that you can use a "user pref file" to change any of these symbols to
-something you are more comfortable with.
+Note that you can use a "user pref file" to change any of these
+symbols to something you are more comfortable with.
 
 
 

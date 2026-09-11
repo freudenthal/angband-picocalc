@@ -47,7 +47,7 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 | `src/termdiag.c` | The stage 040 terminal diagnostic. Port-written. |
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
-| `tools/` | The suite and the heap probe. Port-written. |
+| `tools/` | The suite, the heap probe, the screen sweep and `rewrap-help.py`. Port-written. |
 | `copying.txt` | Upstream `docs/copying.rst`, renamed. |
 | `build-sweep/`, `build-host/`, `build-pico2/` | Generated. Gitignored. |
 
@@ -91,8 +91,18 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-Four vendored files are edited. Each edit is wrapped in a `PORT:` banner.
-`git diff --stat 2cf1b4a HEAD -- src/game src/host` must list exactly these four.
+**Fourteen** vendored files are edited. Each edit is wrapped in a `PORT:` banner; every
+hunk of `git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`.
+
+Four of them are the platform, the file layer, the host harness and one SRAM placement
+(sections 1 to 4). The other ten are stage 060's 64-column layout (section 5), and **every
+one of those is conditional on `Term->wid < 80`**, so at 80 columns the code that runs is
+upstream's. That is not an assertion: `tools/host-build.sh` runs the end-to-end tests at 80
+columns and `tools/screen-sweep.sh` renders thirty-two screens at 80 and at 64 side by side.
+
+```
+git diff --stat 2cf1b4a HEAD -- src/game src/host
+```
 
 ### 1. `src/game/h-basic.h` — the `PICOCALC` platform macro
 
@@ -145,12 +155,29 @@ collision" test), so pico-vfs's `rename()` does not replace. `savefile.c` depend
 replacing twice per save. The port calls `remove()` on the target first, guarded by a
 `strcmp` so that renaming a name onto itself cannot turn into a delete.
 
-### 3. `src/host/main-test.c` — three harness probes
+### 3. `src/host/main-test.c` — six harness probes and two term options
 
-`heap?`, `depth?` and `jump N`, plus `#include "cmd-core.h"`. They exist so
-`tools/host-build.sh` can reproduce the heap table in `specifications.md` §7.1 without a
-device. `heapshim_report()` is declared weak, so the binary still runs without the
-`LD_PRELOAD` shim. This file is host-only and never reaches the firmware.
+Stages 050 and 060. Host-only; this file never reaches the firmware.
+
+| Added | Stage | What it is for |
+|---|---|---|
+| `heap? [tag]` | 050 | ask `tools/heapshim.c` for live/peak/allocation counts. Declared weak, so the binary still runs without the `LD_PRELOAD` shim. |
+| `depth?` | 050 | print the current dungeon level. |
+| `jump N` | 050 | queue `CMD_WIZ_JUMP_LEVEL`, bypassing the `Ctrl-A` confirmation. |
+| `screen? [tag]` | 060 | dump the whole `Term` grid as text, one `SCR\|` line per row. |
+| `sidebar N` | 060 | set `angband_term[0]->sidebar_mode` and `do_cmd_redraw()`. |
+| `size?` | 060 | print the term size, so a capture carries its geometry. |
+| `key escape` | 060 | `ESCAPE`, which leaves every screen the layout sweep visits. |
+| `-s WxH` | 060 | the term geometry. Default 80x24, so `tests/` is unaffected. |
+| `-b N` | 060 | the initial sidebar mode. Default `SIDEBAR_LEFT`, as `term_init()` leaves it. |
+
+Plus `#include "cmd-core.h"` and `#include "ui-command.h"`.
+
+**`screen?` is what stage 060 was written from.** The stage's job was to find what a
+64-column term throws away, and `Term_putstr()` clips at `Term->wid` and reports nothing —
+so the only way to see the damage is to render the screen and look at it. Rendering it at
+80 as well, and printing the text that lives at column 64 or beyond, turns "what is cut
+off" into a list. `tools/screen-sweep.sh` does exactly that.
 
 
 ### 4. `src/game/ui-term.c` — `Term_fresh` and its row scan run from SRAM
@@ -197,6 +224,36 @@ expands to, so the effect is identical and the sweep still compiles 150 of 150.
 
 **If this is ever reverted**, the frame time goes back up by about 36 ms and nothing else
 changes. It is safe to drop on a part where the heap and the code share one memory.
+
+### 5. Ten `src/game/ui-*.c` files — the 64-column layout
+
+Stage 060. The term is 64x32 and upstream assumes 80x24 (`specifications.md` §4). Ten user
+interface files put something at a column past 63, and at 64 `Term_putstr()` clips it and
+says nothing, so the loss is silent. **Every hunk below is guarded by `Term->wid < 80`**,
+except the one in `ui-init.c`, which is guarded by `PICOCALC` and is explained there.
+
+The port gets eight rows back in exchange for sixteen columns, and the narrow layouts spend
+them: what upstream puts side by side, they put one above the other.
+
+| File | What moves under 64 columns |
+|---|---|
+| `ui-display.c` | `update_topbar()` takes **three rows, not two** — level and experience, armour class, gold and the race and class title on the first, the five stats on the second, HP, mana, the health bar, speed and depth on the third. Upstream's first row is 84 columns at its maximum, so armour class and gold fell off it. `update_statusline()` follows to row 4. `show_splashscreen()` clamps `text_out_indent` at 0; `(Term->wid - 80) / 2` is **-8** here, and a negative column is silently refused, which put the whole of `news.txt` in one cell. |
+| `ui-term.h` | `ROW_MAP` allows for the third top-bar row. Everything derived from the map's top row goes through that macro, so it is the only place that has to know. |
+| `ui-player.c` | The character sheet, the one screen stage 050 found genuinely broken. The stat table moves from row 2 column 42 to row 9 column 26; the combat and skills panels come down below the panels they used to sit beside; the history wraps at `Term->wid - 1`; the prompt goes on the last row rather than row 23. Page two's four 19-column resistance panels need 76 columns, so they become **two panels on each of two pages** — `INFO_SCREENS` 3 instead of 2 — and the per-region entry cap is taken against `Term->hgt` instead of a hardcoded 22. `write_character_dump()` follows the same layout. |
+| `ui-birth.c` | The point-buy Cost and Total columns follow the stat table. The menu instructions and three centred prompts are said shortly enough to fit, and `prt_centred_prompt()` never asks for a negative column — `Term->wid / 2 - strlen(prompt) / 2` is -3 for a 71-character prompt at 64, which is the splash-screen defect again. The menu hint wraps to two rows, which `clear_question()` and `birth_menu_handler()` already allow for. |
+| `ui-knowledge.c` | `know_col()` moves every fixed right-hand column left by `80 - Term->wid`, so the block keeps its internal spacing and the header still sits over its data: the object list's Ignore, Inscribed and symbol, the monster list's symbol, kills and "fully known", the feature and trap lists' lighting symbols, and the visual-mode readout. `know_prt_name()` then clips the name so it cannot run into the block. The browser's key prompt has a short form. |
+| `ui-object.c` | `item_menu()`'s `ex_offset` accounts for the three columns `ui-menu.c` spends on the `a) ` tag. Upstream leaves them out, so the last three characters of the last extra field fall off: inventory weights read `3.0 l`. |
+| `ui-spell.c` | A 24-column spell-name field, not 30, and a header to match. The menu is `Term->wid - 15` wide and loses three more to the tag, so ` difficult` was arriving as `dif`. |
+| `ui-death.c` | The death menu goes at `Term->wid - 17`; at upstream's column 51 its longest entry runs to 66. |
+| `ui-input.c` | A short form of the character-name prompt, which is 54 columns and has the name typed after it. |
+| `ui-init.c` | **The only one not conditional on width.** `plog("Main window is too small")` is `#ifndef PICOCALC`. It fired on every boot, the game walked straight past it — it is a `plog()`, not a `quit()` — and stage 050 lost several minutes to it mid-session because it reads like a blocker. Now that every screen has a 64-column layout the warning is wrong. The guard is on the platform and not on `Term->wid` because on a front end that can be resized the warning is still true: a user who has dragged a window to 64 columns can undo it, and a soldered 320x320 panel cannot. |
+
+**The data files are 64 columns too.** `lib/screens/news.txt` is re-drawn (its colour markup
+counts against the line length, so the art had to lose about sixteen columns and the quote
+is re-wrapped); `dead.txt` and `retire.txt` are trimmed; `lib/help/*.txt` is re-wrapped by
+`tools/rewrap-help.py`, which re-flows prose paragraphs and turns the two- and three-column
+key tables into one entry per line. `awk 'length > 64' lib/help/*.txt lib/screens/*.txt`
+prints nothing.
 
 ## The platform layer
 
@@ -360,6 +417,8 @@ cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh
 angband-pico/tools/compile-sweep.sh      # the suite, part 1: cross-compile sweep
 angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, tests, heap probe
 angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree
+angband-pico/tools/screen-sweep.sh       # the suite, part 4: every screen rendered at 80 and 64
+angband-pico/tools/port-warnings.sh      # the suite, part 5: the port's own sources at -Wall -Wextra
 cmake --build angband-pico/build-pico2 --target angband_core
 cmake --build angband-pico/build-pico2 --target angband_psramdiag
 cmake --build angband-pico/build-pico2 --target angband_fsdiag

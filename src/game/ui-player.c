@@ -142,6 +142,42 @@ struct char_sheet_config {
 static struct char_sheet_config *cached_config = NULL;
 static void display_resistance_panel(int ipart, struct char_sheet_config* config);
 
+/*
+ * PORT: stage 060. The character sheet is the one screen stage 050 found genuinely broken
+ * at 64 columns, and the whole of this file's narrow layout hangs off this predicate.
+ *
+ * Upstream's sheet is 80 columns wide in four places: the stat table sits at column 42 and
+ * is 30 wide, the skills panel at column 52 is 20 wide, the history wraps at 72, and page
+ * two puts four 19-column resistance panels at columns 0, 20, 40 and 60. At 64 the right
+ * of each is simply gone -- Term_putstr() clips and says nothing -- which is why the stat
+ * header read "Self RB CB E" on the device.
+ *
+ * The narrow layout spends rows instead, which this port has: the term is 64x32 and
+ * upstream assumes 80x24, so there are eight rows going spare. Page one moves the stat
+ * table, the combat panel and the skills panel below the panels they used to sit beside;
+ * pages two and three carry two resistance panels each instead of one page carrying four.
+ *
+ * Everything is conditional on this test, so at 80 columns and wider the sheet is
+ * upstream's byte for byte -- which the host end-to-end tests and the 80-column pass of
+ * tools/screen-sweep.sh both exercise.
+ */
+static bool char_sheet_narrow(void)
+{
+	return Term->wid < 80;
+}
+
+/*
+ * PORT: stage 060. Pages in character info mode: two upstream, three when narrow.
+ */
+#define INFO_SCREENS_NARROW 3
+
+/*
+ * PORT: stage 060. Which resistance panels a narrow page shows: mode 1 gets 0 and 1
+ * (resistances and abilities), mode 2 gets 2 and 3 (hindrances and modifiers).
+ */
+static int narrow_flag_page = 0;
+
+
 
 static bool have_valid_char_sheet_config(void)
 {
@@ -231,6 +267,17 @@ static void configure_char_sheet(void)
 		cached_config->res_regions[i].row = 2 + STAT_MAX;
 		cached_config->res_regions[i].width = cached_config->res_cols;
 
+		/*
+		 * PORT: stage 060. Two panels to a page instead of four, and they start
+		 * below the stat table rather than beside the top block -- 19 + 1 + 19 is
+		 * 39 columns, which leaves room to spread them a little at 64.
+		 */
+		if (char_sheet_narrow()) {
+			cached_config->res_regions[i].col =
+				(i & 1) * (cached_config->res_cols + 3);
+			cached_config->res_regions[i].row = 3 + 2 * STAT_MAX + 2;
+		}
+
 		test_categories[1] = region_categories[i];
 		ui_iter = initialize_ui_entry_iterator_const(
 			check_for_two_categories, test_categories,
@@ -239,8 +286,17 @@ static void configure_char_sheet(void)
 		/*
 		 * Fit in 24 row display; leave at least one row blank before
 		 * prompt on last row.
+		 *
+		 * PORT: stage 060. The same rule against the term's real height, which is 32
+		 * here. Without it the narrow layout, whose panels start 8 rows further down,
+		 * would be capped at 5 entries and drop most of the resistances -- the
+		 * criterion this stage is held to is that every one of them is shown.
 		 */
-		if (n + 2 + cached_config->res_regions[i].row > 22) {
+		if (char_sheet_narrow()) {
+			if (n + 2 + cached_config->res_regions[i].row > Term->hgt - 2) {
+				n = Term->hgt - 4 - cached_config->res_regions[i].row;
+			}
+		} else if (n + 2 + cached_config->res_regions[i].row > 22) {
 		    n = 20 - cached_config->res_regions[i].row;
 		}
 		cached_config->n_resist_by_region[i] = n;
@@ -438,6 +494,16 @@ static void display_player_flag_info(void)
 {
 	int i;
 
+	/*
+	 * PORT: stage 060. Four 19-column panels need 76 columns. At 64 only two fit, so a
+	 * narrow page shows two and there is one more page.
+	 */
+	if (char_sheet_narrow()) {
+		for (i = 0; i < 2; i++)
+			display_resistance_panel(2 * narrow_flag_page + i, cached_config);
+		return;
+	}
+
 	for (i = 0; i < 4; i++)
 		display_resistance_panel(i, cached_config);
 }
@@ -458,6 +524,16 @@ void display_player_stat_info(void)
 
 	/* Column */
 	col = 42;
+
+	/*
+	 * PORT: stage 060. The table is 30 columns wide before the drained-stat column at
+	 * col+31, so at 64 it has to come down off the top row of panels. Column 26 leaves
+	 * the drained value at 57..62, the last thing on the row that fits.
+	 */
+	if (char_sheet_narrow()) {
+		row = 9;
+		col = 26;
+	}
 
 	/* Print out the labels for the columns */
 	c_put_str(COLOUR_WHITE, "  Self", row-1, col+5);
@@ -539,6 +615,17 @@ static void display_player_sust_info(struct char_sheet_config *config)
 
 	/* Column */
 	col = 26;
+
+	/*
+	 * PORT: stage 060. These five rows are the five stats in stat order and carry no
+	 * labels of their own -- the stat table beside them is what names them. So when the
+	 * stat table moves down to row 9 (see display_player_stat_info()) this has to move
+	 * with it, on to the same rows and to the left of it.
+	 */
+	if (char_sheet_narrow()) {
+		row = 9;
+		col = 8;
+	}
 
 	/* Header */
 	c_put_str(COLOUR_WHITE, "abcdefgimnop@", row - 1, col);
@@ -855,9 +942,53 @@ static const struct {
 	{ { 52, 9, 20, 8 }, false, get_panel_skills },
 };
 
+/*
+ * PORT: stage 060. The same five panels at 64 columns.
+ *
+ * Only the two right-hand ones move. The combat panel comes down to row 15, below the
+ * stat table's rows 8-13 but in the same column band; the skills panel comes down to row
+ * 19 in the left band, below the mid-left panel's rows 9-17. Nothing overlaps, and the
+ * history still has rows 27-30 under all of it. The top two panels and the mid-left one
+ * already fit inside 64 and are at upstream's coordinates.
+ */
+static const struct {
+	region bounds;
+	bool align_left;
+	struct panel *(*panel)(void);
+} narrow_panels[] =
+{
+	/*   x   y wid rows */
+	{ {  1,  1, 40, 7 }, true,  get_panel_topleft },	/* Name, Class, ... */
+	{ { 21,  1, 18, 3 }, false, get_panel_misc },	/* Age, ht, wt, ... */
+	{ {  1,  9, 24, 9 }, false, get_panel_midleft },	/* Cur Exp, Max Exp, ... */
+	{ { 26, 15, 19, 9 }, false, get_panel_combat },
+	{ {  1, 19, 20, 8 }, false, get_panel_skills },
+};
+
 void display_player_xtra_info(void)
 {
 	size_t i;
+
+	/* PORT: stage 060. The narrow layout; see char_sheet_narrow(). */
+	if (char_sheet_narrow()) {
+		for (i = 0; i < N_ELEMENTS(narrow_panels); i++) {
+			struct panel *p = narrow_panels[i].panel();
+			display_panel(p, narrow_panels[i].align_left,
+						  &narrow_panels[i].bounds);
+			panel_free(p);
+		}
+
+		text_out_wrap = Term->wid - 1;
+		text_out_indent = 1;
+
+		Term_gotoxy(text_out_indent, 27);
+		text_out_to_screen(COLOUR_WHITE, player->history);
+
+		text_out_wrap = 0;
+		text_out_indent = 0;
+		return;
+	}
+
 	for (i = 0; i < N_ELEMENTS(panels); i++) {
 		struct panel *p = panels[i].panel();
 		display_panel(p, panels[i].align_left, &panels[i].bounds);
@@ -907,11 +1038,27 @@ void display_player(int mode)
 		display_panel(p, panels[0].align_left, &panels[0].bounds);
 		panel_free(p);
 
+		/*
+		 * PORT: stage 060. Narrow: mode 1 is the sustains plus resistances and
+		 * abilities, mode 2 is hindrances and modifiers. The sustain rows carry no
+		 * labels of their own, so they go on the page that follows the stat table
+		 * most closely and mode 2 does without them.
+		 */
+		if (char_sheet_narrow()) {
+			narrow_flag_page = (mode - 1) & 1;
+
+			if (narrow_flag_page == 0)
+				display_player_sust_info(cached_config);
+
+			display_player_flag_info();
+		} else {
+
 		/* Stat/Sustain flags */
 		display_player_sust_info(cached_config);
 
 		/* Other flags */
 		display_player_flag_info();
+		}
 	} else {
 		/* Extra info */
 		display_player_xtra_info();
@@ -936,6 +1083,7 @@ void write_character_dump(ang_file *fff)
 
 	int n;
 	char *buf, *p;
+	int dump_hgt, dump_wid;	/* PORT: stage 060, see below. */
 
 	if (!have_valid_char_sheet_config()) {
 		configure_char_sheet();
@@ -950,14 +1098,22 @@ void write_character_dump(ang_file *fff)
 	/* Begin dump */
 	file_putf(fff, "  [%s Character Dump]\n\n", buildid);
 
+	/*
+	 * PORT: stage 060. The dump is a transcript of the character sheet, so it follows
+	 * whatever layout the sheet is using. At 64 columns page one runs to the bottom of
+	 * the term rather than stopping at row 22, and the rows are 64 wide rather than 79.
+	 */
+	dump_hgt = char_sheet_narrow() ? Term->hgt - 1 : 23;
+	dump_wid = char_sheet_narrow() ? Term->wid - 1 : 79;
+
 	/* Display player basics */
 	display_player(0);
 
 	/* Dump part of the screen */
-	for (y = 1; y < 23; y++) {
+	for (y = 1; y < dump_hgt; y++) {
 		p = buf;
 		/* Dump each row */
-		for (x = 0; x < 79; x++) {
+		for (x = 0; x < dump_wid; x++) {
 			/* Get the attr/char */
 			(void)(Term_what(x, y, &a, &c));
 
@@ -1024,6 +1180,15 @@ void write_character_dump(ang_file *fff)
 	/* Print a header */
 	file_putf(fff, "%-20s%s\n", "Hindrances", "Modifiers");
 
+	/*
+	 * PORT: stage 060. Narrow puts hindrances and modifiers on their own page at the
+	 * same two columns, rather than in the third and fourth column of one page, so the
+	 * dump has to turn the page rather than read further right.
+	 */
+	if (char_sheet_narrow()) {
+		display_player(2);
+	}
+
 	/* Dump part of the screen */
 	ylim = ((cached_config->n_resist_by_region[2] >
 		cached_config->n_resist_by_region[3]) ?
@@ -1035,7 +1200,8 @@ void write_character_dump(ang_file *fff)
 		/* Dump each row */
 		for (x = 0; x < 2 * cached_config->res_cols + 1; x++) {
 			/* Get the attr/char */
-			(void)(Term_what(x + 2 * cached_config->res_cols + 2, y, &a, &c));
+			(void)(Term_what(x + (char_sheet_narrow() ? 0 :
+				2 * cached_config->res_cols + 2), y, &a, &c));
 
 			/* Dump it */
 			n = text_wctomb(p, c);
@@ -1225,6 +1391,14 @@ void do_cmd_change_name(void)
 
 	bool more = true;
 
+	/*
+	 * PORT: stage 060. Three pages at 64 columns, two at 80; and the prompt goes on the
+	 * last row of the term rather than row 23, which on a 32-row term leaves it stranded
+	 * eight rows above the bottom with the history wrapped underneath it.
+	 */
+	int nscreens = char_sheet_narrow() ? INFO_SCREENS_NARROW : INFO_SCREENS;
+	int prompt_row = (Term->hgt == 24) ? 23 : Term->hgt - 1;
+
 	/* Prompt */
 	p = "['c' to change name, 'f' to file, 'h' to change mode, or ESC]";
 
@@ -1237,7 +1411,7 @@ void do_cmd_change_name(void)
 		display_player(mode);
 
 		/* Prompt */
-		Term_putstr(2, 23, -1, COLOUR_WHITE, p);
+		Term_putstr(2, prompt_row, -1, COLOUR_WHITE, p);
 
 		/* Query */
 		ke = inkey_m();
@@ -1280,24 +1454,38 @@ void do_cmd_change_name(void)
 				case 'h':
 				case ARROW_LEFT:
 				case ' ':
-					mode = (mode + 1) % INFO_SCREENS;
+					mode = (mode + 1) % nscreens;
 					break;
 
 				case 'l':
 				case ARROW_RIGHT:
-					mode = (mode - 1) % INFO_SCREENS;
+					/*
+					 * PORT: stage 060. (mode - 1) % n is negative in C
+					 * when mode is 0, and with upstream's n of 2 the
+					 * next press happens to bring it back. With three
+					 * pages it would not, and display_player() would be
+					 * called with -1. Add n first when narrow; leave the
+					 * 80-column path exactly as it was.
+					 */
+					if (nscreens != INFO_SCREENS)
+						mode = (mode + nscreens - 1) % nscreens;
+					else
+						mode = (mode - 1) % INFO_SCREENS;
 					break;
 			}
 		} else if (ke.type == EVT_MOUSE) {
 			if (ke.mouse.button == 1) {
 				/* Flip through the screens */			
-				mode = (mode + 1) % INFO_SCREENS;
+				mode = (mode + 1) % nscreens;
 			} else if (ke.mouse.button == 2) {
 				/* exit the screen */
 				more = false;
 			} else {
 				/* Flip backwards through the screens */			
-				mode = (mode - 1) % INFO_SCREENS;
+				if (nscreens != INFO_SCREENS)
+					mode = (mode + nscreens - 1) % nscreens;
+				else
+					mode = (mode - 1) % INFO_SCREENS;
 			}
 		}
 

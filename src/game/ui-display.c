@@ -762,28 +762,62 @@ static int prt_title_short(int row, int col)
 	return 0;
 }
 
+/*
+ * PORT: stage 060. Under 80 columns the top bar takes three rows, not two.
+ *
+ * Upstream's first row is level, experience, the five stats, armour class, gold and the
+ * race and class title. Priced at its maximum -- "L:50" 5, "EXP:" plus ten digits 15, five
+ * stats at "18/100" 9 each, "AC:200" 7, "AU:" plus eight digits 12 -- that is 84 columns
+ * before the race is reached, so on a 64-column term a developed character loses its
+ * armour class and its gold entirely and silently: Term_putstr() clips at Term->wid and
+ * reports nothing. Splitting the five stats onto a row of their own bounds row one at
+ * 39 columns plus the race and class, and the stat row at 45.
+ *
+ * The third row is upstream's second, unchanged and already within 64: HP 13, SP 13, the
+ * health bar 13, speed 11 and depth 12 come to 62 at their maxima, and the short-mode
+ * title after them is empty unless the character is a wizard, a winner or shapechanged.
+ *
+ * The cost is one row of map. ROW_MAP allows for it -- see the PORT: note in ui-term.h --
+ * and update_statusline() puts the status line below the third row.
+ *
+ * At 80 columns and wider this is upstream's code exactly, which the host end-to-end tests
+ * and tools/screen-sweep.sh's 80-column pass both exercise.
+ */
 static void update_topbar(game_event_type type, game_event_data *data,
 						  void *user, int row)
-{	
-	int col = 0;	
+{
+	int col = 0;
+	bool narrow = (Term->wid < 80);
 
-	prt("", row, col);	
+	prt("", row, col);
 
 	col += prt_level_short(row, col);
 
 	col += prt_exp_short(row, col);
-	
+
+	if (narrow) {
+		col += prt_ac_short(row, col);
+		col += prt_gold_short(row, col);
+		col += prt_race_class_short(row, col);
+
+		++row;
+		col = 0;
+		prt("", row, col);
+	}
+
 	col += prt_stat_short(STAT_STR, row, col);
 	col += prt_stat_short(STAT_INT, row, col);
 	col += prt_stat_short(STAT_WIS, row, col);
 	col += prt_stat_short(STAT_DEX, row, col);
 	col += prt_stat_short(STAT_CON, row, col);
 
-	col += prt_ac_short(row, col);
+	if (!narrow) {
+		col += prt_ac_short(row, col);
 
-	col += prt_gold_short(row, col);
+		col += prt_gold_short(row, col);
 
-	col += prt_race_class_short(row, col);
+		col += prt_race_class_short(row, col);
+	}
 
 	++row;
 	col = 0;
@@ -792,7 +826,7 @@ static void update_topbar(game_event_type type, game_event_data *data,
 
 	col += prt_hp_short(row, col);
 	col += prt_sp_short(row, col);
-	col += prt_health_short(row, col);	
+	col += prt_health_short(row, col);
 	col += prt_speed_short(row, col);
 	col += prt_depth_short(row, col);
 	col += prt_title_short(row, col);
@@ -1318,7 +1352,8 @@ static void update_statusline(game_event_type type, game_event_data *data, void 
 	int row = Term->hgt - 1;
 
 	if (Term->sidebar_mode == SIDEBAR_TOP) {
-		row = 3;
+		/* PORT: stage 060. The narrow top bar is three rows, not two. */
+		row = (Term->wid < 80) ? 4 : 3;
 	}
 
 	update_statusline_aux(row, COL_MAP);
@@ -2451,8 +2486,17 @@ static void show_splashscreen(game_event_type type, game_event_data *data,
 
 	/* Dump */
 	if (fp) {
-		/* Centre the splashscreen - assume news.txt has width 80, height 23 */
+		/*
+		 * Centre the splashscreen - assume news.txt has width 80, height 23
+		 *
+		 * PORT: stage 060. Never a negative indent. On a 64-column term this computes
+		 * -8; Term_gotoxy() rejects a negative column and returns an error, text_out()
+		 * carries on regardless, and the whole file lands wherever the cursor already
+		 * was -- on the device that showed one "^" and nothing else. The port's
+		 * news.txt is redrawn to 64 columns, so the indent it wants here is 0.
+		 */
 		text_out_indent = (Term->wid - 80) / 2;
+		if (text_out_indent < 0) text_out_indent = 0;
 		Term_gotoxy(0, (Term->hgt - 23) / 5);
 
 		/* Dump the file to the screen */

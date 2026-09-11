@@ -602,6 +602,21 @@ static void term_data_link(void)
     // battery polling a keyboard that TERM_XTRA_EVENT already polls.
     t->never_bored = true;
 
+    // Stage 060. The sidebar goes on top, not down the left.
+    //
+    // SIDEBAR_LEFT costs 13 columns of every row and leaves the map 51x30 = 1,530 cells;
+    // SIDEBAR_TOP costs three rows plus the status line and leaves it 64x27 = 1,728, and
+    // the 64 columns matter more than the cells because the dungeon is 198 wide and the
+    // panel scrolls by half a screen. SIDEBAR_NONE is out on the source alone:
+    // ui-display.c's update_sidebar() returns immediately for it, so HP, mana, depth and
+    // speed are not drawn anywhere, which the stage plan requires to be visible.
+    //
+    // The three-row top bar is a PORT: edit in ui-display.c, conditional on Term->wid < 80;
+    // upstream's two-row version overflows 64 columns as soon as a stat reaches 18/100.
+    // The options menu ('=' then 'o') still cycles all three modes, and save.c/load.c
+    // still carry the choice in the savefile.
+    t->sidebar_mode = SIDEBAR_TOP;
+
     t->init_hook = Term_init_pico;
     t->nuke_hook = Term_nuke_pico;
 

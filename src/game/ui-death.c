@@ -375,7 +375,14 @@ void death_screen(void)
 {
 	struct menu *death_menu;
 	bool done = false;
-	const region area = { 51, 2, 0, N_ELEMENTS(death_actions) };
+	/*
+	 * PORT: stage 060. The menu's longest entry is "x) Examine items", 16 columns, so at
+	 * upstream's column 51 it runs to 66 and a 64-column term keeps "x) Examine it".
+	 * Term->wid - 17 puts it flush against the right edge instead; the tombstone art is
+	 * no wider than column 44 on the rows the menu occupies, so nothing collides.
+	 */
+	const region area = { (Term->wid < 80) ? Term->wid - 17 : 51, 2, 0,
+		N_ELEMENTS(death_actions) };
 
 	/* Winner */
 	if (player->total_winner)
