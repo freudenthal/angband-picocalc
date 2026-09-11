@@ -81,8 +81,16 @@ target_include_directories(angband_core PUBLIC
 # The three DEFAULT_*_PATH values are what config.h reads; all three point at the SD card
 # mount, so savefiles land in /angband/lib/user/save/. Setting them here avoids editing
 # config.h.
+# USE_PRIVATE_PATHS (stage 050) is the one switch that decides where the game writes.
+# init.c:388 is its only use: with it, the save, scores and panic directories hang off
+# ANGBAND_DIR_USER, i.e. /angband/lib/user/; without it they hang off the data path, i.e.
+# /angband/lib/save, /angband/lib/scores, /angband/lib/panic. specifications.md 6.3 and 8
+# both describe the former, and the card staging in 8 creates exactly those four
+# directories under user/, so this is what makes the code agree with the card. It has
+# nothing to do with PRIVATE_USER_PATH, which is UNIX-only and stays undefined here.
 target_compile_definitions(angband_core PUBLIC
     PICOCALC=1
+    USE_PRIVATE_PATHS=1
     DEFAULT_CONFIG_PATH="/angband/lib/"
     DEFAULT_LIB_PATH="/angband/lib/"
     DEFAULT_DATA_PATH="/angband/lib/"
@@ -313,3 +321,66 @@ pico_enable_stdio_usb(angband_termdiag 1)
 pico_enable_stdio_uart(angband_termdiag 0)
 
 pico_add_extra_outputs(angband_termdiag)
+
+# ---------------------------------------------------------------------------------------
+# angband (stage 050) -- the game.
+#
+# This is the first target that links angband_core, so it is the first one where the whole
+# 150-unit core has to resolve. src/main.c is the entry point; src/host/main.c is upstream's
+# UNIX front-end chooser and is never built here.
+#
+# main-pico.c and utf8.c are sources on the executable rather than members of
+# angband_platform, for the reason angband_termdiag gives above: they include core headers,
+# and angband_platform is also linked by two diagnostics that have no ui-term.c.
+add_executable(angband
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/main-pico.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/utf8.c
+    $<TARGET_OBJECTS:angband_core>
+)
+
+# angband_core's usage requirements taken by hand, not by linking the OBJECT library --
+# that would add its objects a second time. src/main.c itself compiles at the project
+# default, C11, like every other port-written source.
+target_include_directories(angband PRIVATE
+    ${PICO_VFS_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/game
+)
+target_compile_definitions(angband PRIVATE
+    PICOCALC=1
+    USE_PRIVATE_PATHS=1
+    DEFAULT_CONFIG_PATH="/angband/lib/"
+    DEFAULT_LIB_PATH="/angband/lib/"
+    DEFAULT_DATA_PATH="/angband/lib/"
+)
+
+# THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
+# SCRATCH_Y as a gap for this stage to close, and the game cannot live in it -- one frame
+# of ui-output.c's text_out_to_screen() is 6 KB on its own.
+#
+# Two halves. The linker script overrides in src/link/ move the .stack_dummy section out of
+# SCRATCH_Y and into RAM and recompute __StackTop/__StackBottom/__StackLimit to match;
+# PICO_STACK_SIZE then sets how big it is, which in SCRATCH_Y it could not (4 KB is the
+# whole region). crt0.S reads PICO_STACK_SIZE and pico_crt0 is an INTERFACE library that
+# adds crt0.S as a source to this executable, so a PRIVATE definition here reaches it.
+#
+# 64 KB, not the 32 KB the stage plan proposed. Deep recursion in the dungeon generator and
+# 1 KB path/line buffers nested several calls apart make the true figure unknown until it
+# is measured, and on a first bring-up a stack overflow is indistinguishable from any other
+# hard fault. src/main.c paints the stack at boot and reports the high-water mark on every
+# level, which is the number a later stage should trim this to. 64 KB of 520 KB.
+pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_SOURCE_DIR}/src/link
+    FILES sections_stack.incl section_end.incl)
+target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
+
+# pico_rand for the RNG seed: specifications.md 6.3 says time() here is boot time plus a
+# constant, so z-rand.c's Rand_init() would roll the same dungeon on every boot.
+target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand)
+
+# specifications.md 6.5. The game is not a diagnostic, but every boot line, the
+# init_angband() timing and the per-level heap figures go to serial, and a quit() message
+# goes to both.
+pico_enable_stdio_usb(angband 1)
+pico_enable_stdio_uart(angband 0)
+
+pico_add_extra_outputs(angband)

@@ -1,0 +1,68 @@
+/* PORT: port-written for angband-pico, stage 050.
+ *
+ * Overrides pico-sdk 2.3.0's
+ *   src/rp2_common/pico_standard_link/script_include/section_end.incl
+ * through pico_add_linker_script_override_path() (see angband-pico/CMakeLists.txt).
+ *
+ * The companion to sections_stack.incl, which moves the core-0 stack from the fixed 4 KB
+ * SCRATCH_Y into the RAM region. The SDK's copy of this file hard-codes
+ *
+ *     __StackTop = ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y);
+ *
+ * so without this override every symbol that names the stack would still point at
+ * SCRATCH_Y and src/main.c's stack paint-and-scan would measure the wrong 4 KB.
+ *
+ * Three lines differ from the SDK's file and nothing else does:
+ *
+ *   __StackTop     now the top of .stack_dummy wherever the linker placed it.
+ *   __StackLimit   "poorly named, but historically is maximum heap ptr" in the SDK's own
+ *                  words. The SDK sets it to the end of RAM, i.e. the bottom of the
+ *                  SCRATCH_Y stack seen from the heap's side; here the heap must stop
+ *                  where the stack starts, so it is the bottom of .stack_dummy. Nothing
+ *                  in this port reads it -- psram_heap.c's _sbrk serves PSRAM and never
+ *                  consults it (specifications.md 6.2) -- but leaving it past the stack
+ *                  would be a trap for anything that later did.
+ *   the ASSERT     the SDK's compares __StackLimit against __HeapLimit, and __HeapLimit
+ *                  is set to the end of RAM by section_heap.incl, which this arrangement
+ *                  makes unsatisfiable by construction. The check that matters now is
+ *                  that the stack fits inside RAM, which is what is asserted instead.
+ *                  (ld also fails the link on its own with "region RAM overflowed" if
+ *                  .stack_dummy does not fit; this is the belt to that pair of braces.)
+ */
+
+/* Defines the following symbols for use by code:
+    __StackLimit
+    __StackOneTop, __StackOneBottom
+    __StackTop, __StackBottom
+    __stack (== __StackTop)
+
+    Also defines additional symbols for other compilers/libcs
+*/
+
+SECTIONS
+{
+    __StackOneTop = ORIGIN(SCRATCH_X) + LENGTH(SCRATCH_X);
+    __StackOneBottom = __StackOneTop - SIZEOF(.stack1_dummy);
+
+    /* PORT: the SDK's copy reads ORIGIN(SCRATCH_Y) + LENGTH(SCRATCH_Y). */
+    __StackTop = ADDR(.stack_dummy) + SIZEOF(.stack_dummy);
+    __StackBottom = ADDR(.stack_dummy);
+    /* PORT: the SDK's copy reads ORIGIN(RAM) + LENGTH(RAM). */
+    __StackLimit = __StackBottom;
+    PROVIDE(__stack = __StackTop);
+
+    /* picolibc and LLVM */
+    PROVIDE (__heap_start = __end__);
+    PROVIDE (__heap_end = __HeapLimit);
+    PROVIDE( __tls_align = MAX(ALIGNOF(.tdata), ALIGNOF(.tbss)) );
+    PROVIDE( __tls_size_align = (__tls_size + __tls_align - 1) & ~(__tls_align - 1));
+    PROVIDE( __arm32_tls_tcb_offset = MAX(8, __tls_align) );
+
+    /* llvm-libc */
+    PROVIDE (_end = __end__);
+    PROVIDE (__llvm_libc_heap_limit = __HeapLimit);
+
+    /* PORT: check the stack fits in RAM, rather than the SDK's heap-versus-stack test. */
+    ASSERT(__StackTop <= ORIGIN(RAM) + LENGTH(RAM), "region RAM overflowed")
+    ASSERT(__StackBottom >= __end__, "region RAM overflowed")
+}

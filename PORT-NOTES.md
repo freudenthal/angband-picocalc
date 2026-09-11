@@ -40,8 +40,11 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 | `src/game/` | 150 `.c` and 166 `.h` — the whole core. Built for the device. |
 | `src/host/` | Upstream `main.c` and `main-test.c`. **WSL harness only**; never compiled for the device. |
 | `src/platform/` | The platform layer. `lcd.c/.h`, `font5x10.c/.h`, `southbridge.c/.h` copied byte-identical from `../tinyrogue-pico/src/platform/`; `psram_heap.c/.h`, `sd_fs.c/.h`, `syscalls.c/.h` port-written. Stages 020, 030. |
+| `src/main.c` | **The game's entry point.** Stage 050. Port-written, after upstream `src/main-nds.c`. Not to be confused with `src/host/main.c`, which is upstream's UNIX front-end chooser. |
+| `src/link/` | Two pico-sdk linker-script overrides. Stage 050; see **The stack** below. |
 | `src/psramdiag.c` | The stage 020 PSRAM diagnostic. Port-written. |
 | `src/fsdiag.c` | The stage 030 SD filesystem diagnostic. Port-written. |
+| `src/termdiag.c` | The stage 040 terminal diagnostic. Port-written. |
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
 | `tools/` | The suite and the heap probe. Port-written. |
@@ -214,6 +217,9 @@ never write a second LCD driver).
 | `main-pico.c`, `main-pico.h` | port-written here | 040 |
 | `utf8.c`, `utf8.h` | port-written here | 040 |
 
+Nothing was added to `src/platform/` by stage 050: the game's entry point is
+`src/main.c`, not a platform file, because it is Angband's `main()` and not hardware.
+
 The four copied pairs carry tinyrogue's own `PORT:` banners, which name their upstream
 (Picoware `841d9c56`, whose own upstream is
 https://github.com/BlairLeduc/picocalc-text-starter, MIT) and every change tinyrogue made:
@@ -279,6 +285,57 @@ is 150 MHz, not the 125 MHz that expression assumes, and `spi_set_baudrate()` ca
 divide by an even prescale times a post-divide. `sd_fs_effective_hz()` reads the achieved
 rate back out of the hardware, and that is the number `specifications.md` §6.3 records.
 
+## The stack, and the two linker-script overrides
+
+Stage 050. `src/link/sections_stack.incl` and `src/link/section_end.incl` replace the
+pico-sdk 2.3.0 files of the same names, through the SDK's own
+`pico_add_linker_script_override_path()`. They apply to the `angband` executable and to
+nothing else; the three diagnostics still link with the stock script.
+
+**Why.** The SDK puts the core-0 stack at the top of `SCRATCH_Y`, which on the RP2350 is a
+fixed **4 KB** memory region — so `PICO_STACK_SIZE` cannot be raised past `0x1000` whatever
+is asked for, and every link in this tree before stage 050 reported `SCRATCH_Y 2 KB of 4 KB,
+50.00%`. `specifications.md` §12 recorded that as the gap stage 050 had to close, and the
+game cannot live in 2 KB: one frame of `ui-output.c`'s `text_out_to_screen()` is a
+1024-entry `wchar_t` buffer (4 KB) plus `av[256]` and `cv[256]` (2 KB), and `init.c`,
+`savefile.c` and `z-file.c` carry 1024-byte path and line buffers several calls apart.
+
+**What.** `sections_stack.incl` sends `.stack_dummy` to `RAM` instead of `SCRATCH_Y`; that
+is its only change from the SDK's copy. `section_end.incl` then recomputes `__StackTop`,
+`__StackBottom` and `__StackLimit`, which the SDK's copy hard-codes to `SCRATCH_Y` and the
+end of `RAM`, and replaces the `__StackLimit >= __HeapLimit` assertion — unsatisfiable once
+the stack is inside `RAM`, since `section_heap.incl` sets `__HeapLimit` to the end of the
+region — with the check that the stack fits. `PICO_STACK_SIZE` is then free to set the size,
+and `CMakeLists.txt` sets it to `0x10000`. The core-1 stack is left in `SCRATCH_X`, untouched
+and unused: this port is single-core.
+
+**Why the linker and not an MSP switch inside `main()`.** The stage plan offered both. The
+linker route means the whole program runs on the big stack **from reset**, including the
+SDK's own runtime init and every interrupt; it needs no naked assembly; and the placement is
+visible in the map file and in `nm`, where an MSP switch would be invisible to both.
+
+**Why 64 KB and not the 32 KB the stage plan proposed.** The true figure was unknown until
+it was measured, and on a first bring-up a stack overflow is indistinguishable from any other
+hard fault. `src/main.c` paints the unused stack with `0xC5C5C5C5` at boot and reports the
+high-water mark on every level; that number is what a later stage should trim this to. 64 KB
+of 520 KB.
+
+**If this is ever reverted**, the stack goes back to 2 KB in `SCRATCH_Y` and the game faults
+during `init_angband()`. It is not optional on this part.
+
+## `USE_PRIVATE_PATHS`
+
+Stage 050, a compile definition on `angband_core` and on `angband`, not a source edit.
+`init.c:388` is its only use in the whole tree, and it decides one thing: whether the save,
+scores and panic directories hang off `ANGBAND_DIR_USER` (`/angband/lib/user/`) or off the
+data path (`/angband/lib/`). `specifications.md` §6.3 and §8 both describe the former, and
+the card staging in §8 creates exactly those directories under `user/`, so this is the switch
+that makes the code agree with the card. Without it the savefile would land in
+`/angband/lib/save/` and the four staged directories would sit unused.
+
+It has nothing to do with `PRIVATE_USER_PATH`, which `config.h` defines only under `UNIX`
+and which stays undefined here.
+
 ## Known deviations from a clean `PICOCALC` build
 
 * **`<signal.h>` reaches every device translation unit.** Upstream `h-basic.h:113`
@@ -307,4 +364,5 @@ cmake --build angband-pico/build-pico2 --target angband_core
 cmake --build angband-pico/build-pico2 --target angband_psramdiag
 cmake --build angband-pico/build-pico2 --target angband_fsdiag
 cmake --build angband-pico/build-pico2 --target angband_termdiag
+cmake --build angband-pico/build-pico2 --target angband        # the game
 ```
