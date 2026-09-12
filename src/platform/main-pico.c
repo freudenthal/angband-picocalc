@@ -7,6 +7,7 @@
 // STACK NOTE (stage 020): the core-0 stack is the 2 KB the SDK puts in SCRATCH_Y. The span
 // buffer below is 6,400 bytes and is therefore static, not automatic.
 
+#include <stdio.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -407,6 +408,115 @@ static void push_key(const kbd_event_t *e)
     Term_keypress(code, mods);
 }
 
+// PORT: picocalc-device-harness stage 045 -------------------------------------------------
+#ifdef ANGBAND_SERIAL_SCREEN
+/**
+ * The screen mirror: the term grid as text, on request, over the console.
+ *
+ * The driver sends one 0x1C and gets back one framed block (harness specifications.md 8.5):
+ *
+ *     SCR BEGIN <seq> <cols> <rows>
+ *     SCR <rr> |<64 characters>|
+ *     SCR END <seq> <cells> <substituted> <crc32>
+ *
+ * WHERE IT IS SERVED, AND WHY NOT Term_fresh(). This runs from check_events(), inside
+ * TURNLOG_MARK(tl_idle)/TURNLOG_IDLE(tl_idle), so its ~200 ms of wire at 115200 is
+ * subtracted from the turn's `tot` exactly as the stage 030 key path is. The obvious place
+ * -- Term_xtra_pico's TERM_XTRA_FRESH case, a few lines down -- is inside the measured
+ * command: Term_fresh() is called from the game's command processing, so a block emitted
+ * there would add about 195 ms to every frame against a town command of 1.53-1.64 s. That
+ * is a 12 % instrument in the thing it measures.
+ *
+ * scr, NOT old. check_events() is reached only after Term_fresh() has returned, so at this
+ * instant scr and old agree and scr is the game's own answer to "what is on the screen". A
+ * later stage that serves a dump from anywhere else has to revisit that.
+ *
+ * THE ROW IS COPIED BEFORE IT IS SCANNED, for the reason TERM_XTRA_CLEAR below gives:
+ * the term's cells live in PSRAM and this code runs from flash, so touching them cell by
+ * cell alternates QMI chip selects at the 7,766 ns measured in the Angband project's
+ * stage 045. One memcpy per row, then the scan runs entirely in SRAM.
+ *
+ * Attributes are not sent. If a stage ever needs to tell a red D from a white one, SCRA
+ * rows carrying one hex digit per cell are added beside these without changing them.
+ */
+
+static uint32_t screen_seq = 0;
+
+// One row out of PSRAM, and the ASCII it becomes. Static, not automatic: the file's stack
+// note applies, and 64 wchar_t is 256 bytes.
+static wchar_t screen_row_cp[PICO_TERM_COLS];
+static char screen_row[PICO_TERM_COLS + 1];
+
+/**
+ * CRC-32 (IEEE 802.3, reflected, poly 0xEDB88320), bitwise so it needs no 1 KB table.
+ *
+ * This is what zlib.crc32 computes, which is what harness/screen.py checks every dump
+ * with: crc32_update(0xFFFFFFFF, "123456789", 9) ^ 0xFFFFFFFF == 0xCBF43926. Bitwise costs
+ * 8 iterations per byte over 2,048 bytes once per request, inside the idle bracket.
+ */
+static uint32_t crc32_update(uint32_t crc, const char *buf, size_t n)
+{
+    for (size_t i = 0; i < n; i++)
+    {
+        crc ^= (uint8_t)buf[i];
+
+        for (int bit = 0; bit < 8; bit++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(crc & 1u)));
+    }
+
+    return crc;
+}
+
+/**
+ * Emit one dump. Called from push_serial_key() and from nowhere else.
+ */
+static void dump_screen(void)
+{
+    uint32_t crc = 0xFFFFFFFFu;
+    uint32_t substituted = 0;
+
+    screen_seq++;
+
+    printf("SCR BEGIN %lu %d %d\n", (unsigned long)screen_seq,
+           PICO_TERM_COLS, PICO_TERM_ROWS);
+
+    for (int y = 0; y < PICO_TERM_ROWS; y++)
+    {
+        memcpy(screen_row_cp, Term->scr->c[y], sizeof(screen_row_cp));
+
+        for (int x = 0; x < PICO_TERM_COLS; x++)
+        {
+            wchar_t cp = screen_row_cp[x];
+
+            // Printable ASCII goes as itself -- '|' included, which is why the parser
+            // splits on the FIRST and LAST bar of a row and not on any bar. Everything
+            // else becomes '?' and is counted, so a font or term change that starts
+            // producing non-ASCII is visible in the END line rather than silent.
+            if (cp < 0x20 || cp > 0x7E)
+            {
+                screen_row[x] = '?';
+                substituted++;
+            }
+            else
+            {
+                screen_row[x] = (char)cp;
+            }
+        }
+
+        screen_row[PICO_TERM_COLS] = '\0';
+        crc = crc32_update(crc, screen_row, PICO_TERM_COLS);
+        printf("SCR %02d |%s|\n", y, screen_row);
+    }
+
+    // The CRC covers the row payloads concatenated, with no bars and no row numbers, so
+    // both sides compute it over the same bytes.
+    printf("SCR END %lu %d %lu %08lx\n", (unsigned long)screen_seq,
+           PICO_TERM_COLS * PICO_TERM_ROWS, (unsigned long)substituted,
+           (unsigned long)(crc ^ 0xFFFFFFFFu));
+}
+#endif
+// -----------------------------------------------------------------------------------------
+
 // PORT: picocalc-device-harness stage 030 -------------------------------------------------
 #ifdef ANGBAND_SERIAL_KEYS
 /**
@@ -445,6 +555,22 @@ static bool push_serial_key(int c)
         code = KC_BACKSPACE;
     else if (c == 0x1B)
         code = ESCAPE;
+#ifdef ANGBAND_SERIAL_SCREEN
+    else if (c == 0x1C)
+    {
+        // PORT: picocalc-device-harness stage 045. A screen dump request, not a key.
+        // Its own branch ahead of the Ctrl range for the reason the 0x0A branch above
+        // gives, even though 0x1C is outside 0x01..0x1A and would fall to the drop at
+        // the bottom: the order is the thing that gets written wrong.
+        //
+        // It returns FALSE. A dump is not a keypress, so check_events() must not set
+        // `got` for it -- setting it would end a waiting check_events() early and
+        // change when the game runs, which is the bug class specifications.md 8.3's
+        // note was written about.
+        dump_screen();
+        return false;
+    }
+#endif
     else if (c >= 0x01 && c <= 0x1A)
     {
         // 0x08, 0x09, 0x0A and 0x0D were all taken above -- the spec's "except the four
@@ -464,6 +590,8 @@ static bool push_serial_key(int c)
     }
     else
     {
+        // 0x1C is here too when ANGBAND_SERIAL_SCREEN is off, which is what makes a
+        // driver that sends it harmless against a build without the mirror.
         return false; // 0x00, 0x1C-0x1F, 0x80-0xFF
     }
 

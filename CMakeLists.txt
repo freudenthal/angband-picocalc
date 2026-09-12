@@ -70,6 +70,54 @@ option(ANGBAND_TURN_LOG "Stage 070: per-turn latency log on serial" OFF)
 # deliver break bytes; a path that is off by default cannot be fed by noise.
 option(ANGBAND_SERIAL_KEYS "Harness stage 030: keys from stdin in check_events()" OFF)
 
+# PORT: picocalc-device-harness stage 045.
+# ANGBAND_SERIAL_SCREEN -- the screen mirror. A 0x1C byte on either stdio transport asks
+# for the term grid and gets back a framed 64x32 text block (harness specifications.md
+# 8.5). OFF in the shipped build and OFF in every stage 070 measured binary.
+#
+#   cmake -B build-pico2-screen -S . ... -DANGBAND_SERIAL_KEYS=ON -DANGBAND_SERIAL_SCREEN=ON
+#
+# With it ON, push_serial_key() in src/platform/main-pico.c gains one branch for 0x1C that
+# calls dump_screen() and returns false -- false, because a dump request is not a keypress
+# and must not set `got` in check_events() or it would end a wait early. With it OFF the
+# whole thing is inside #ifdef and the link is byte-identical in .text (harness invariant 2,
+# checked on this edit).
+#
+# The dump is served from inside check_events()'s TURNLOG_MARK(tl_idle)/TURNLOG_IDLE(tl_idle)
+# bracket, so its ~200 ms of wire at 115200 is subtracted from `tot`, the same property that
+# made the stage 030 key path free. It is NOT emitted from Term_fresh(), which is inside the
+# measured command.
+option(ANGBAND_SERIAL_SCREEN "Harness stage 045: a term dump on 0x1C in check_events()" OFF)
+
+# ANGBAND_SERIAL_SCREEN_UNSAFE -- the way through the guard below. Not a feature.
+option(ANGBAND_SERIAL_SCREEN_UNSAFE "Harness stage 045: allow the screen mirror in a logged build" OFF)
+
+# The mirror rides on the stage 030 poll: the 0x1C request arrives through
+# push_serial_key(), which only exists under ANGBAND_SERIAL_KEYS. Without it the option
+# would compile to nothing and silently answer nothing, so it is refused rather than
+# ignored.
+if(ANGBAND_SERIAL_SCREEN AND NOT ANGBAND_SERIAL_KEYS)
+    message(FATAL_ERROR
+        "ANGBAND_SERIAL_SCREEN=ON needs ANGBAND_SERIAL_KEYS=ON: the 0x1C request is read by "
+        "the getchar_timeout_us(0) poll that ANGBAND_SERIAL_KEYS puts in check_events(), and "
+        "is dispatched by push_serial_key(). Configure with -DANGBAND_SERIAL_KEYS=ON.")
+endif()
+
+# The guard. The screen mirror and the turn log together make sense for debugging and are
+# wrong for measuring, so the combination is not forbidden, it is loud.
+if(ANGBAND_SERIAL_SCREEN AND ANGBAND_TURN_LOG AND NOT ANGBAND_SERIAL_SCREEN_UNSAFE)
+    message(FATAL_ERROR
+        "ANGBAND_SERIAL_SCREEN=ON with ANGBAND_TURN_LOG=ON: this build would log turns it "
+        "is also instrumenting. A dump is served inside check_events()'s idle bracket, so "
+        "its ~200 ms of wire at 115200 is subtracted from `tot` -- but NOT from wall clock, "
+        "and not from `idle`, which stage 030 recorded cannot hold inter-command waiting. A "
+        "session that polls the screen therefore produces a turn log whose per-phase figures "
+        "are honest and whose elapsed time is not, and nothing in the capture says which "
+        "records were dumped over. Measure with the mirror OFF. To debug a logged build "
+        "anyway, and to accept that its wall clock is not a measurement, configure with "
+        "-DANGBAND_SERIAL_SCREEN_UNSAFE=ON.")
+endif()
+
 # ANGBAND_TEXT_PAD (stage 070 item 8) -- the placement experiment.
 #
 #   cmake -B build-pico2-pad2k -S . ... -DANGBAND_TEXT_PAD=2048
@@ -430,6 +478,9 @@ target_compile_definitions(angband PRIVATE
     # PORT: picocalc-device-harness stage 030. angband_termdiag also compiles main-pico.c
     # and deliberately does not get this define.
     $<$<BOOL:${ANGBAND_SERIAL_KEYS}>:ANGBAND_SERIAL_KEYS=1>
+    # PORT: picocalc-device-harness stage 045. Same rule: angband_termdiag compiles
+    # main-pico.c too and deliberately does not get this define either.
+    $<$<BOOL:${ANGBAND_SERIAL_SCREEN}>:ANGBAND_SERIAL_SCREEN=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
