@@ -407,6 +407,72 @@ static void push_key(const kbd_event_t *e)
     Term_keypress(code, mods);
 }
 
+// PORT: picocalc-device-harness stage 030 -------------------------------------------------
+#ifdef ANGBAND_SERIAL_KEYS
+/**
+ * Map one byte from either stdio transport onto an Angband keycode and push it.
+ *
+ * The table is the harness specifications.md 8.3 and both sides implement exactly it; the
+ * driver's own tests/test_keys.py checks the same rows from the PC end. Returns true if a
+ * keypress was pushed, false if the byte was dropped.
+ *
+ * Everything unmapped is dropped rather than turned into something, which is also what
+ * protects the game when the case cable is out: the CH340 is unpowered then, GP1 floats or
+ * sits at the pad's reset pull, and the UART can deliver 0x00 and break bytes. 0x0A is
+ * dropped so that a sender may write CR LF and the game sees one Enter. Arrow keys are
+ * deliberately not mapped: a VT100 sequence begins with ESC, which is itself a key the game
+ * needs, and Angband's original keyset moves on the digits.
+ */
+static bool push_serial_key(int c)
+{
+    keycode_t code;
+
+    if (c >= 0x20 && c <= 0x7E)
+        code = c;
+    else if (c == 0x0D)
+        code = KC_ENTER;
+    else if (c == 0x0A)
+    {
+        // Dropped, so that a sender may write CR LF and the game sees one Enter. It has to
+        // be taken BEFORE the Ctrl range below: 0x0A is inside 0x01..0x1A, and without this
+        // branch it becomes KTRL('J'), which Angband opens its command menu on. Measured on
+        // the device 2026-09-11, which is the only reason this line exists.
+        return false;
+    }
+    else if (c == 0x09)
+        code = KC_TAB;
+    else if (c == 0x08 || c == 0x7F)
+        code = KC_BACKSPACE;
+    else if (c == 0x1B)
+        code = ESCAPE;
+    else if (c >= 0x01 && c <= 0x1A)
+    {
+        // 0x08, 0x09, 0x0A and 0x0D were all taken above -- the spec's "except the four
+        // above" -- so what is left here is Ctrl-A .. Ctrl-Z. Ctrl follows push_key()'s
+        // rule and sets one of the two forms, never both; the modifier branch cannot be
+        // reached from this range ('A'+c-1 is 0x41..0x5A) and is here because push_key()
+        // is the model, not a special case.
+        keycode_t u = (keycode_t)('A' + c - 1);
+
+        if (!ENCODE_KTRL(u))
+        {
+            Term_keypress(u, KC_MOD_CONTROL);
+            return true;
+        }
+
+        code = KTRL(u);
+    }
+    else
+    {
+        return false; // 0x00, 0x1C-0x1F, 0x80-0xFF
+    }
+
+    Term_keypress(code, 0);
+    return true;
+}
+#endif
+// -----------------------------------------------------------------------------------------
+
 /**
  * Drain the south bridge into the term's key queue.
  *
@@ -433,6 +499,17 @@ static errr check_events(bool wait)
             push_key(&e);
             got = true;
         }
+
+#ifdef ANGBAND_SERIAL_KEYS
+        // PORT: picocalc-device-harness stage 030. Inside the idle bracket by design: an
+        // injected key must land in the same subtracted time a typed one does, or the
+        // instrument appears in the thing it measures. getchar_timeout_us(0) returns
+        // PICO_ERROR_TIMEOUT at once when neither transport has a byte waiting.
+        int c = getchar_timeout_us(0);
+
+        if (c != PICO_ERROR_TIMEOUT && push_serial_key(c))
+            got = true;
+#endif
 
         if (got || !wait)
             break;

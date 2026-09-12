@@ -54,6 +54,22 @@ set(CMAKE_BUILD_TYPE "MinSizeRel")
 # experiment (stage 070 item 8) needs the shipped binary to stay byte-stable.
 option(ANGBAND_TURN_LOG "Stage 070: per-turn latency log on serial" OFF)
 
+# PORT: picocalc-device-harness stage 030.
+# ANGBAND_SERIAL_KEYS -- a byte on either stdio transport becomes a keypress. OFF in the
+# shipped build.
+#
+#   cmake -B build-pico2-harness -S . ... -DANGBAND_SERIAL_KEYS=ON
+#
+# With it ON, check_events() in src/platform/main-pico.c polls getchar_timeout_us(0) beside
+# keyboard_poll() and maps the byte per the harness specifications.md 8.3. With it OFF the
+# whole block is inside #ifdef and the link is byte-identical in .text -- which is the check
+# that the harness is not in the thing it measures (harness invariant 2).
+#
+# It is an option and not always-on because an input path into a game with a savefile should
+# be asked for, and because with the case cable out the CH340 is unpowered and GP1 can
+# deliver break bytes; a path that is off by default cannot be fed by noise.
+option(ANGBAND_SERIAL_KEYS "Harness stage 030: keys from stdin in check_events()" OFF)
+
 # ANGBAND_TEXT_PAD (stage 070 item 8) -- the placement experiment.
 #
 #   cmake -B build-pico2-pad2k -S . ... -DANGBAND_TEXT_PAD=2048
@@ -411,6 +427,9 @@ target_compile_definitions(angband PRIVATE
     DEFAULT_LIB_PATH="/angband/lib/"
     DEFAULT_DATA_PATH="/angband/lib/"
     $<$<BOOL:${ANGBAND_TURN_LOG}>:ANGBAND_TURN_LOG=1>
+    # PORT: picocalc-device-harness stage 030. angband_termdiag also compiles main-pico.c
+    # and deliberately does not get this define.
+    $<$<BOOL:${ANGBAND_SERIAL_KEYS}>:ANGBAND_SERIAL_KEYS=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
