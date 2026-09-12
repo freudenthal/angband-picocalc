@@ -448,7 +448,10 @@ target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand)
 # specifications.md 6.5. The game is not a diagnostic, but every boot line, the
 # init_angband() timing and the per-level heap figures go to serial, and a quit() message
 # goes to both.
+# PORT: picocalc-device-harness stage 020. The case USB-C is the Pico's UART0 console
+# through the CH340 and it survives every reset; USB stays on because picotool's reset
+# interface rides on it.
 pico_enable_stdio_usb(angband 1)
-pico_enable_stdio_uart(angband 0)
+pico_enable_stdio_uart(angband 1)
 
 pico_add_extra_outputs(angband)
