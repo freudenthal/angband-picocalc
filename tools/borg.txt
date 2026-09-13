@@ -1,0 +1,63 @@
+# borg.txt -- PORT: picocalc-device-harness stage 055.
+#
+# Every value here is the borg's OWN default, taken line for line from the borg_settings[]
+# table at src/game/borg/borg-init.c:57 and written out in the same order. The file exists
+# so that the setting the harness depends on is WRITTEN DOWN rather than inherited, and so
+# that the first borg run does not stop on the "*****WARNING***** You do not have a proper
+# BORG.TXT file!" message -- which arrives with a -more- before the borg has installed its
+# keypress hook, so nothing is there to clear it and the run hangs at the prompt.
+#
+# tools/borg-run.sh copies this into the run directory's lib/user/, which is
+# ANGBAND_DIR_USER for that run.
+#
+# THE FOUR THAT MATTER TO LOCKSTEP, all left at their defaults and all four for a reason:
+#
+#   borg_cheat_death = FALSE     The borg reincarnates on death instead of resurrecting in
+#                                place. Reincarnation generates a NEW CHARACTER from the
+#                                live RNG and the device cannot follow it by any means, so
+#                                main-borg.c ends the run at the first death rather than
+#                                letting this happen. Setting it TRUE would hide the death
+#                                behind a wizard heal, which is a different game from the
+#                                one the device is playing and is worse.
+#   borg_autosave    = FALSE     An autosave would rewrite the savefile mid-run. The device
+#                                loaded the savefile as it was at command 0; a host that
+#                                edits it underneath is not a lockstep partner.
+#   borg_delay_factor = 0        No artificial delay. The device sets the pace here.
+#   borg_verbose     = FALSE     TRUE writes one log line per keypress. Useful when a
+#                                divergence has to be explained, expensive otherwise.
+
+borg_verbose = FALSE
+borg_munchkin_start = FALSE
+borg_munchkin_level = 12
+borg_munchkin_depth = 16
+borg_worships_damage = FALSE
+borg_worships_speed = FALSE
+borg_worships_hp = FALSE
+borg_worships_mana = FALSE
+borg_worships_ac = FALSE
+borg_worships_gold = FALSE
+borg_plays_risky = FALSE
+borg_kills_uniques = FALSE
+borg_uses_swaps = TRUE
+borg_uses_dynamic_calcs = FALSE
+borg_stop_dlevel = 128
+borg_stop_clevel = 51
+borg_no_deeper = 127
+borg_stop_king = TRUE
+borg_cheat_death = FALSE
+borg_respawn_winners = FALSE
+borg_respawn_class = -1
+borg_respawn_race = -1
+borg_chest_fail_tolerance = 7
+borg_delay_factor = 0
+borg_money_scum_amount = 0
+borg_self_scum = TRUE
+borg_lunal_mode = FALSE
+borg_self_lunal = FALSE
+borg_enchant_limit = 12
+borg_dump_level = 1
+borg_save_death = 1
+borg_stop_on_bell = FALSE
+borg_allow_strange_opts = FALSE
+borg_autosave = FALSE
+borg_restore_ignore_settings = FALSE

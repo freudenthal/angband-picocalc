@@ -4,6 +4,7 @@
 # Run from Git Bash on the Windows host:
 #
 #   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/host-build.sh
+#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/host-build.sh --borg
 #
 # It shells out to WSL, builds the vendored core natively with gcc, links it against the
 # vendored upstream main.c + main-test.c, runs the end-to-end tests under tests/, and then
@@ -17,30 +18,108 @@
 #   Total: 5/5
 #   depth: 50  followed by  HEAP[L50] live=...
 #
-# Everything is built under angband-pico/build-host/, which is gitignored. The WSL side
+# --borg (picocalc-device-harness stage 055) builds a SECOND, separate binary instead:
+# build-host-borg/angband-borg, which is src/game/ plus src/game/borg/ plus the port-written
+# front end src/host/main-borg.c, with -D ALLOW_BORG and
+# -D ANGBAND_SYNC. It is the PC half of lockstep: Angband's own borg plays a savefile here,
+# every keypress it feeds the game is written to a keystream file, and one SYNC line per
+# completed command is written beside it. The harness sends the keys to the device and
+# compares the device's SYNC lines against these. Nothing in src/game/borg/ is compiled for the
+# device; see CMakeLists.txt, which does not mention it.
+#
+# The two builds share NOTHING but the source tree: separate build directory, separate
+# object directory, separate binary. --borg does not run the end-to-end tests or the heap
+# probe, so the suite result quoted in a run log always comes from the plain invocation.
+#
+# Everything is built under angband-pico/build-host*/, which is gitignored. The WSL side
 # works in the same directory through /mnt/c, so no state lives in the WSL home.
 
 set -u
+
+BORG=0
+for a in "$@"; do
+	case "$a" in
+		--borg) BORG=1 ;;
+		*) echo "host-build: unknown argument '$a' (only --borg)"; exit 2 ;;
+	esac
+done
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WPORT="$(echo "$PORT" | sed 's|^/\([a-zA-Z]\)/|/mnt/\1/|')"
 
 echo "host-build: port tree $PORT"
 echo "host-build: as seen from WSL: $WPORT"
+[ "$BORG" = 1 ] && echo "host-build: --borg, building build-host-borg/angband-borg only"
 
-wsl.exe -e bash -lc "PORT='$WPORT' bash -s" <<'WSLEOF'
+wsl.exe -e bash -lc "PORT='$WPORT' BORG='$BORG' HOST_OPT='${HOST_OPT:-}' bash -s" <<'WSLEOF'
 set -u
 cd "$PORT" || exit 2
+
+# -fsigned-char: harness stage 055. ARM GCC defaults char to unsigned and x86-64 GCC to
+# signed, and lockstep asks the device and this build to agree on every value the game
+# computes. CMakeLists.txt and tools/compile-sweep.sh carry the same flag; all three are
+# edited together or none is.
+# HOST_OPT (harness stage 055): the optimisation level, so that a divergence can be tested
+# against the device's -Os without editing this file. Undefined behaviour resolves
+# differently under different optimisation, and the device builds at MinSizeRel.
+: "${HOST_OPT:=-O1}"
+CFLAGS="$HOST_OPT -g -std=gnu99 -fsigned-char -DUSE_TEST -DHAVE_DIRENT_H -DHAVE_STAT -DHAVE_MKDIR -DHAVE_FCNTL_H -w -I$PORT/src/game -I$PORT/src/platform"
+
+if [ "$BORG" = 1 ]; then
+	B="$PORT/build-host-borg"
+	rm -rf "$B"
+	mkdir -p "$B/obj"
+
+	# ALLOW_BORG turns on the hooks the core already carries for it: inkey_hack in
+	# ui-input.c, the Ctrl-Z binding in ui-game.c, NOSCORE_BORG in player.h, the
+	# do_cmd_borg dispatch in cmd-misc.c. None of them changes OPT_MAX or the savefile
+	# layout, so a savefile written without it loads here unchanged -- which matters,
+	# because the device build does NOT define it and lockstep needs one savefile.
+	#
+	# ANGBAND_SYNC turns on the ANGBAND_SYNC_END() call beside TURNLOG_END() in
+	# ui-game.c and main-borg.c's sync_end(), which is built on src/platform/sync-fmt.h --
+	# the same header src/platform/main-pico.c includes. So this build emits the same SYNC
+	# line the device does, out of one formatter.
+	BCFLAGS="$CFLAGS -DALLOW_BORG -DANGBAND_SYNC -I$PORT/src/game/borg"
+
+	echo "host-build: compiling (borg)"
+	start=$SECONDS
+	# src/host/main.c and src/host/main-test.c are NOT in this list: main-borg.c has its
+	# own main(), so the upstream front-end chooser is replaced rather than extended and
+	# neither vendored file is edited.
+	ls src/game/*.c src/game/borg/*.c src/host/main-borg.c > "$B/files.txt"
+	nsrc=$(wc -l < "$B/files.txt")
+
+	xargs -P 12 -n 1 -I{} sh -c \
+	  'gcc '"$BCFLAGS"' -c "$1" -o "'"$B"'/obj/$(basename "${1%.c}").o" 2>> "'"$B"'/cc.log" || echo "FAILED $1" >> "'"$B"'/fail.log"' \
+	  _ {} < "$B/files.txt"
+
+	nobj=$(ls "$B/obj" | wc -l)
+	echo "host-build: $nobj of $nsrc objects ($((SECONDS - start))s)"
+	if [ -s "$B/fail.log" ]; then
+		echo "host-build: compile failures:"
+		cat "$B/fail.log"
+		grep -m 30 "error:" "$B/cc.log"
+		exit 1
+	fi
+
+	echo "host-build: linking angband-borg"
+	gcc -o "$B/angband-borg" "$B"/obj/*.o -lm || exit 1
+	ls -l "$B/angband-borg"
+	echo "host-build: borg build ok"
+	exit 0
+fi
 
 B="$PORT/build-host"
 rm -rf "$B"
 mkdir -p "$B/obj"
 
-CFLAGS="-O1 -g -std=gnu99 -DUSE_TEST -DHAVE_DIRENT_H -DHAVE_STAT -DHAVE_MKDIR -DHAVE_FCNTL_H -w -I$PORT/src/game -I$PORT/src/platform"
-
 echo "host-build: compiling"
 start=$SECONDS
-ls src/game/*.c src/host/*.c > "$B/files.txt"
+# src/host/main-borg.c is NOT in this list, and "src/host/*.c" would put it there. It has
+# its own main(), which would collide with main.c's, and it needs ALLOW_BORG, which this
+# build does not define. It is built only by --borg above.
+ls src/game/*.c src/host/main.c src/host/main-test.c > "$B/files.txt"
 nsrc=$(wc -l < "$B/files.txt")
 
 # One gcc per source, 12 at a time. The -n1 keeps a single failure from hiding the rest.
@@ -64,7 +143,7 @@ gcc -o "$B/angband-test" "$B"/obj/*.o -lm || exit 1
 # the device is silent: a wrong wide-character count just shifts a line by a cell.
 echo
 echo "host-build: front end unit checks (utf8.c)"
-gcc -O1 -std=gnu99 -Wall -Wextra -I"$PORT/src/platform" -I"$PORT/src/game" \
+gcc -O1 -std=gnu99 -fsigned-char -Wall -Wextra -I"$PORT/src/platform" -I"$PORT/src/game" \
 	-o "$B/utf8-test" "$PORT/tools/utf8-test.c" "$PORT/src/platform/utf8.c" || exit 1
 if "$B/utf8-test" > "$B/utf8.log" 2>&1; then
 	echo "host-build: utf8-test $(grep -c '^ok ' "$B/utf8.log")/$(grep -c '^ok \|^FAIL ' "$B/utf8.log") checks passed"

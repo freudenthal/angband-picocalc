@@ -72,6 +72,12 @@
  * src/platform/turnlog.h.
  */
 #include "turnlog.h"
+/*
+ * PORT: picocalc-device-harness stage 055, 2026-09-12. The lockstep witness, and the same
+ * rules as the two lines above it: measurement only, the same call site, and with
+ * ANGBAND_SYNC unset ANGBAND_SYNC_END() is ((void)0). See src/platform/sync.h.
+ */
+#include "sync.h"
 #include "z-file.h"
 #include "z-util.h"
 #include "z-virt.h"
@@ -985,6 +991,7 @@ void play_game(enum game_mode_type mode)
 			TURNLOG_BEGIN();		/* PORT: stage 070 */
 			run_game_loop();
 			TURNLOG_END(player->depth, turn);	/* PORT: stage 070 */
+			ANGBAND_SYNC_END(turn);			/* PORT: harness stage 055 */
 		}
 
 		/* Close game on death or quitting */

@@ -16,6 +16,7 @@
 #include "keyboard.h"
 #include "lcd.h"
 #include "main-pico.h"
+#include "sync.h"
 #include "turnlog.h"
 #include "utf8.h"
 
@@ -607,6 +608,47 @@ static bool push_serial_key(int c)
  * Returns 0 if at least one key was pushed, 1 if not -- the convention TERM_XTRA_EVENT
  * wants. With wait set it does not return until something arrives.
  */
+// PORT: picocalc-device-harness stage 055 ---------------------------------------------------
+#ifdef ANGBAND_SYNC
+/*
+ * The lockstep witness. See src/platform/sync.h for what the record is and
+ * src/platform/sync-fmt.h for the format and for why the formatter is a header.
+ *
+ * WHY THE IMPLEMENTATION IS HERE AND NOT IN A FILE OF ITS OWN. A new .c file on the
+ * `angband` target moves the linker's long-branch veneers even when it is an empty
+ * translation unit, and harness invariant 2 asks for .text to be BYTE-identical with the
+ * option off, not merely the same size. Measured 2026-09-12: same .text (965,744 B), same
+ * FLASH, same RAM, and 894 bytes different, every one of them a veneer address. sync-fmt.h
+ * has the disassembly.
+ *
+ * WHERE IT IS CALLED FROM. src/game/ui-game.c, on the line after TURNLOG_END(), in
+ * play_game()'s loop and therefore AFTER run_game_loop() has returned. The ~9 ms of wire at
+ * 115200 is outside every measured bracket, the same property that makes turnlog_end()'s
+ * own printf free. It is emitted on the console the turn log and the PICO[...] lines use,
+ * and a capture containing SYNC lines still reduces under angband-pico/tools/turnlog.py,
+ * which accepts only lines whose strip starts with "TL ".
+ */
+#include "sync-fmt.h"
+
+void sync_end(int32_t game_turn)
+{
+    char line[160];
+    int len;
+
+    // player is NULL until the savefile is loaded and the loop this is called from does not
+    // run before then, so this is cheap insurance rather than dead code.
+    if (!player)
+        return;
+
+    sync_n++;
+
+    len = sync_format(line, sizeof(line), sync_n, game_turn);
+    if (len > 0)
+        fputs(line, stdout);
+}
+#endif
+// -----------------------------------------------------------------------------------------
+
 static errr check_events(bool wait)
 {
     kbd_event_t e;

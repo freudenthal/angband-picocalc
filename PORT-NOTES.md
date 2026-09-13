@@ -38,7 +38,8 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 | Path | Contents |
 |---|---|
 | `src/game/` | 150 `.c` and 166 `.h` — the whole core. Built for the device. |
-| `src/host/` | Upstream `main.c` and `main-test.c`. **WSL harness only**; never compiled for the device. |
+| `src/host/` | Upstream `main.c` and `main-test.c`, plus the port-written `main-borg.c`. **WSL harness only**; never compiled for the device. |
+| `src/game/borg/` | Angband's borg, 118 files, vendored **unmodified**. **HOST ONLY** — no device target mentions it. Under `src/game/` and not `src/` because every borg header includes `"../angband.h"`, which resolves only from there. Harness stage 055. |
 | `src/platform/` | The platform layer. `lcd.c/.h`, `font5x10.c/.h`, `southbridge.c/.h` copied byte-identical from `../tinyrogue-pico/src/platform/`; `psram_heap.c/.h`, `sd_fs.c/.h`, `syscalls.c/.h` port-written. Stages 020, 030. |
 | `src/main.c` | **The game's entry point.** Stage 050. Port-written, after upstream `src/main-nds.c`. Not to be confused with `src/host/main.c`, which is upstream's UNIX front-end chooser. |
 | `src/link/` | Two pico-sdk linker-script overrides. Stage 050; see **The stack** below. |
@@ -58,7 +59,7 @@ upstream build systems, none of which the port uses):
 
 | Path | Files |
 |---|---|
-| `src/borg/` | 118 |
+| ~~`src/borg/`~~ | ~~118~~ — **re-vendored at `src/game/borg/` by harness stage 055**, unmodified, for the PC-side borg only. See the layout table above. |
 | `src/tests/` | 113 |
 | `src/win/` | 26 |
 | `src/nds/` | 22 |
@@ -91,8 +92,11 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-**Seventeen** vendored files are edited. Each edit is wrapped in a `PORT:` banner; every
-hunk of `git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`.
+**Seventeen** vendored files are edited, and `ui-game.c` carries one more hunk since harness
+stage 055 (section 6). Each edit is wrapped in a `PORT:` banner; every hunk of
+`git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`. **The 118 files of
+`src/game/borg/` are not among them and must stay that way** — they were vendored unmodified
+and all 59 sources compiled clean against this core on the first attempt.
 
 Four of them are the platform, the file layer, the host harness and one SRAM placement
 (sections 1 to 4). Ten are stage 060's 64-column layout (section 5), and **every one of
@@ -100,10 +104,21 @@ those is conditional on `Term->wid < 80`**, so at 80 columns the code that runs 
 upstream's. That is not an assertion: `tools/host-build.sh` runs the end-to-end tests at 80
 columns and `tools/screen-sweep.sh` renders thirty-two screens at 80 and at 64 side by side.
 
-The other three are stage 070's turn instrument (section 6). **They are guarded by a
-compile option and not by a width, and with the option off they generate no code at all** —
-`tools/compile-sweep.sh` reports the same `text 769928 data 20182 bss 77138` before and
-after, and the linked game is the same 896,540 B of FLASH and 190,912 B of RAM.
+The other three are stage 070's turn instrument and, in `ui-game.c`, harness stage 055's
+lockstep witness (section 6). **They are guarded by a compile option and not by a width, and
+with the option off they generate no code at all** — `tools/compile-sweep.sh` reports the
+same `text` / `data` / `bss` before and after, and the linked game's `.text` is byte-identical
+by `objcopy`/`cmp`.
+
+**`-fsigned-char` is on every build since harness stage 055** — `CMakeLists.txt`,
+`tools/host-build.sh` and `tools/compile-sweep.sh`, edited together or not at all. ARM GCC
+defaults `char` to unsigned and x86-64 GCC to signed, and nothing here used to say which, so
+a `char` compared against zero took a different value in the device build and in the host
+build of the same source. That is invisible until two builds of one game are asked to agree,
+which is exactly what lockstep does. It is not free: the shipped build's `.text` went
+965,360 → **965,744 B (+384)** and `compile-sweep.sh`'s total 769,928 → **770,282 (+354)**,
+spread over 37 of the 150 core sources and no more than 40 B in any one of them. Every figure
+in this file measured before 2026-09-12 predates it.
 
 ```
 git diff --stat 2cf1b4a HEAD -- src/game src/host
@@ -263,7 +278,7 @@ include path) — and the definitions are in `src/platform/turnlog.c`.
 
 | File | What is bracketed |
 |---|---|
-| `ui-game.c` | `TURNLOG_BEGIN()` / `TURNLOG_END(player->depth, turn)` around `run_game_loop()` in `play_game()`. **This is the only place in the tree where one player command is exactly one iteration**: the loop is `pre_turn_refresh(); cmd_get_hook(CTX_GAME); run_game_loop();`, so the blocking wait for a key is in `cmd_get_hook()` and outside the bracket, and the `printf` is in `turnlog_end()` and therefore after `run_game_loop()` has returned. |
+| `ui-game.c` | `TURNLOG_BEGIN()` / `TURNLOG_END(player->depth, turn)` around `run_game_loop()` in `play_game()`, and since harness stage 055 `ANGBAND_SYNC_END(turn)` on the line after -- the lockstep witness, under `ANGBAND_SYNC`, `((void)0)` with the option off, declared in `src/platform/sync.h` under the same `<stdint.h>`-only rule as `turnlog.h`. **This is the only place in the tree where one player command is exactly one iteration**: the loop is `pre_turn_refresh(); cmd_get_hook(CTX_GAME); run_game_loop();`, so the blocking wait for a key is in `cmd_get_hook()` and outside the bracket, and the `printf` is in `turnlog_end()` and therefore after `run_game_loop()` has returned. |
 | `cave-view.c` | Three of the seven per-step sweeps: `mark_wasseen()` and `calc_lighting()` at their call sites inside `update_view()`, and the `update_view` main loop. |
 | `game-world.c` | Four more: `forget_noise()` and the `make_noise()` flood (kept **disjoint** by closing the `make_noise` bracket before `forget_noise()` and reopening it after), `update_scent()` and the trap-timeout loop in `process_world()`. Plus three containers: `process_world()` itself, all four `process_monsters()`/`reset_monsters()` call sites in `run_game_loop()`, and `prepare_next_level()`. |
 
@@ -448,6 +463,8 @@ angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, te
 angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree
 angband-pico/tools/screen-sweep.sh       # the suite, part 4: every screen rendered at 80 and 64
 angband-pico/tools/port-warnings.sh      # the suite, part 5: the port's own sources at -Wall -Wextra
+angband-pico/tools/host-build.sh --borg  # harness stage 055: the PC-side borg, host only
+angband-pico/tools/borg-run.sh birth     # and the savefile a lockstep run loads on both sides
 cmake --build angband-pico/build-pico2 --target angband_core
 cmake --build angband-pico/build-pico2 --target angband_psramdiag
 cmake --build angband-pico/build-pico2 --target angband_fsdiag

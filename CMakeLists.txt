@@ -89,6 +89,46 @@ option(ANGBAND_SERIAL_KEYS "Harness stage 030: keys from stdin in check_events()
 # measured command.
 option(ANGBAND_SERIAL_SCREEN "Harness stage 045: a term dump on 0x1C in check_events()" OFF)
 
+# PORT: picocalc-device-harness stage 055.
+# ANGBAND_SYNC -- the lockstep witness. One SYNC line on the console per completed player
+# command, giving where the game is and, more to the point, where its random number
+# generator is. OFF in the shipped build and OFF in every stage 070 measured binary.
+#
+#   cmake -B build-pico2-sync -S . ... -DANGBAND_SERIAL_KEYS=ON -DANGBAND_SYNC=ON
+#
+# WHAT IT IS FOR. The harness runs Angband's own borg on the PC, inside a host build of
+# THIS core (tools/host-build.sh --borg), and sends the borg's keypresses to the device down
+# the stage 030 serial key path. Two simulations given the same savefile and the same keys
+# must reach the same state; the SYNC line is what proves they did. Without it, "the borg
+# played the device for 1,000 turns" is a claim that a session which silently desynced at
+# turn 40 would also make.
+#
+# WHERE IT IS EMITTED. src/game/ui-game.c calls ANGBAND_SYNC_END(turn) on the line after
+# TURNLOG_END(), in play_game()'s loop, AFTER run_game_loop() has returned -- so the ~9 ms
+# of wire at 115200 is outside every measured bracket, exactly as turnlog_end()'s own printf
+# is. sync_end() itself is in src/platform/main-pico.c, inside #ifdef, and NOT in a source
+# file of its own: one more object on this target moves the linker's long-branch veneers
+# even when it contributes nothing, and invariant 2 asks for .text to be BYTE-identical and
+# not merely the same size. The measurement that says so is in src/platform/sync-fmt.h.
+#
+# THE FORMATTER IS A HEADER, src/platform/sync-fmt.h, AND THE HOST BORG BUILD INCLUDES THE
+# SAME ONE -- so the line the PC writes and the line the device prints come out of one piece
+# of code and cannot drift apart. Only the last step differs: a printf here, a write to a
+# file in src/host/main-borg.c.
+option(ANGBAND_SYNC "Harness stage 055: one SYNC line per completed player command" OFF)
+
+# The SYNC line is only worth emitting to something that is driving the game, and the only
+# thing that can drive it over serial is the stage 030 key path. Without it the option would
+# print a line no one asked for on every command of a hand-played session -- and, worse, a
+# lockstep run would be impossible while the records piled up looking correct. Refused
+# rather than ignored, the same rule ANGBAND_SERIAL_SCREEN is held to below.
+if(ANGBAND_SYNC AND NOT ANGBAND_SERIAL_KEYS)
+    message(FATAL_ERROR
+        "ANGBAND_SYNC=ON needs ANGBAND_SERIAL_KEYS=ON: the SYNC line is the answer to keys "
+        "sent down the stage 030 serial key path, and nothing else can send them. "
+        "Configure with -DANGBAND_SERIAL_KEYS=ON.")
+endif()
+
 # ANGBAND_SERIAL_SCREEN_UNSAFE -- the way through the guard below. Not a feature.
 option(ANGBAND_SERIAL_SCREEN_UNSAFE "Harness stage 045: allow the screen mirror in a logged build" OFF)
 
@@ -141,6 +181,31 @@ set(ANGBAND_TEXT_PAD 0 CACHE STRING "Stage 070 item 8: bytes of .text pad before
 
 # The board. Never pico2 or pico2_w: those are the RP2350A with 4 MB flash.
 set(PICO_BOARD pimoroni_pico_plus2_w_rp2350 CACHE STRING "Board type")
+
+# PORT: picocalc-device-harness stage 055. THE CHAR SIGNEDNESS PIN.
+#
+# ARM GCC defaults `char` to UNSIGNED; x86-64 GCC defaults it to SIGNED. Neither this file
+# nor tools/host-build.sh used to say which, so a `char` compared against zero or
+# sign-extended took a DIFFERENT VALUE on the device and on the host build of the same
+# source. That is invisible until two builds of one game are asked to agree, which is
+# exactly what harness stage 055's lockstep does: the PC runs the borg inside a host build
+# of this core, sends its keys to the device, and compares an RNG checksum per turn. An
+# unpinned `char` would show up there as a divergence that looks like a game bug.
+#
+# -fsigned-char, not -funsigned-char, because the host side is the one that cannot be
+# changed by a flag on this file (WSL gcc, upstream tests, the borg) and because upstream
+# Angband is developed and tested on signed-char platforms.
+#
+# add_compile_options() and not a per-target option: it has to reach angband_core,
+# angband_platform, angband_zterm, the three diagnostics, the game, the SDK and pico-vfs.
+# One translation unit left out is one that can disagree. It is placed BEFORE
+# pico_sdk_init() and before add_subdirectory(pico-vfs) so it is inherited by everything
+# those create.
+#
+# tools/compile-sweep.sh and tools/host-build.sh carry the same flag; all three are edited
+# together or none is. The .text movement this caused on the shipped build is recorded in
+# specifications.md 10.
+add_compile_options(-fsigned-char)
 
 include(pico_sdk_import.cmake)
 
@@ -207,6 +272,14 @@ target_compile_definitions(angband_core PUBLIC
     DEFAULT_LIB_PATH="/angband/lib/"
     DEFAULT_DATA_PATH="/angband/lib/"
 )
+
+# PORT: picocalc-device-harness stage 055. The ANGBAND_SYNC_END() call site is in
+# src/game/ui-game.c, which is an angband_core source, so the define has to reach the object
+# library and not only the executable. PUBLIC so that anything linking the core sees the same
+# ui-game.c it was compiled from. The diagnostics do not link angband_core at all.
+if(ANGBAND_SYNC)
+    target_compile_definitions(angband_core PUBLIC ANGBAND_SYNC=1)
+endif()
 
 if(ANGBAND_TURN_LOG)
     target_compile_definitions(angband_core PUBLIC ANGBAND_TURN_LOG=1)
@@ -481,6 +554,11 @@ target_compile_definitions(angband PRIVATE
     # PORT: picocalc-device-harness stage 045. Same rule: angband_termdiag compiles
     # main-pico.c too and deliberately does not get this define either.
     $<$<BOOL:${ANGBAND_SERIAL_SCREEN}>:ANGBAND_SERIAL_SCREEN=1>
+    # PORT: picocalc-device-harness stage 055. ANGBAND_SYNC has to reach BOTH sync.c and
+    # angband_core, because the call site is in src/game/ui-game.c: a define on this target
+    # alone would compile sync.c and never call it. angband_core gets it just below, the way
+    # ANGBAND_TURN_LOG does, and for the same reason.
+    $<$<BOOL:${ANGBAND_SYNC}>:ANGBAND_SYNC=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB

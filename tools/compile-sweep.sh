@@ -37,7 +37,10 @@ CC=arm-none-eabi-gcc
 command -v "$CC" > /dev/null || { echo "compile-sweep: $CC not found after sourcing tools/pico-env.sh"; exit 2; }
 [ -d "$PICO_VFS/include" ] || { echo "compile-sweep: pico-vfs headers not at $PICO_VFS/include"; exit 2; }
 
-FLAGS=(-mcpu=cortex-m33 -mthumb -Os -ffunction-sections -fdata-sections -std=gnu99 -DPICOCALC -Wall -c)
+# -fsigned-char: harness stage 055 pins char signedness across the device build
+# (CMakeLists.txt), the host build (host-build.sh) and this sweep, so all three compile
+# src/game/ with the same semantics. ARM GCC defaults to unsigned, x86-64 GCC to signed.
+FLAGS=(-mcpu=cortex-m33 -mthumb -Os -ffunction-sections -fdata-sections -std=gnu99 -fsigned-char -DPICOCALC -Wall -c)
 INCLUDES=(-I "$PICO_VFS/include" -I "$PORT/src/game" -I "$PORT/src/platform")
 
 OUT="$PORT/build-sweep"
