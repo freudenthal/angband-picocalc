@@ -31,6 +31,9 @@
 # object directory, separate binary. --borg does not run the end-to-end tests or the heap
 # probe, so the suite result quoted in a run log always comes from the plain invocation.
 #
+# HOST_CC / HOST_LDFLAGS / HOST_TAG (harness stage 056) cross-compile the --borg binary for
+# another architecture; see the block beside HOST_OPT below. Unset, nothing changes.
+#
 # Everything is built under angband-pico/build-host*/, which is gitignored. The WSL side
 # works in the same directory through /mnt/c, so no state lives in the WSL home.
 
@@ -51,7 +54,7 @@ echo "host-build: port tree $PORT"
 echo "host-build: as seen from WSL: $WPORT"
 [ "$BORG" = 1 ] && echo "host-build: --borg, building build-host-borg/angband-borg only"
 
-wsl.exe -e bash -lc "PORT='$WPORT' BORG='$BORG' HOST_OPT='${HOST_OPT:-}' bash -s" <<'WSLEOF'
+wsl.exe -e bash -lc "PORT='$WPORT' BORG='$BORG' HOST_OPT='${HOST_OPT:-}' HOST_CC='${HOST_CC:-}' HOST_LDFLAGS='${HOST_LDFLAGS:-}' HOST_TAG='${HOST_TAG:-}' bash -s" <<'WSLEOF'
 set -u
 cd "$PORT" || exit 2
 
@@ -62,11 +65,31 @@ cd "$PORT" || exit 2
 # HOST_OPT (harness stage 055): the optimisation level, so that a divergence can be tested
 # against the device's -Os without editing this file. Undefined behaviour resolves
 # differently under different optimisation, and the device builds at MinSizeRel.
+# HOST_CC, HOST_LDFLAGS, HOST_TAG (harness stage 056): the ARCHITECTURE knob. Stage 055's
+# divergence survived every non-architectural setting the x86 host could change, so the
+# remaining suspects -- 32-bit word width and the ARM instruction set -- need a host build
+# that is not x86-64. With the cross-compiler installed in this WSL that is:
+#
+#   HOST_TAG=arm HOST_CC=arm-linux-gnueabihf-gcc HOST_LDFLAGS=-static \
+#     HOST_OPT="-O1 -mthumb -fshort-enums" angband-pico/tools/host-build.sh --borg
+#
+# -static because the binary is run under qemu-arm-static, which would otherwise need an
+# armhf sysroot for the dynamic loader. -fshort-enums because the device does the same
+# (arm-none-eabi-readelf -A says Tag_ABI_enum_size: small) and lockstep asks the two sides
+# to agree on every value the game computes; it is the same class of pin as -fsigned-char.
+#
+# HOST_TAG suffixes the build directory, so an ARM build never overwrites the x86 one: the
+# x86 binary is still what the end-to-end suite runs. With all three unset this file behaves
+# exactly as it did before stage 056 -- the acceptance criterion for the change is a replay
+# that is byte-identical to the one taken before it.
 : "${HOST_OPT:=-O1}"
+: "${HOST_CC:=gcc}"
+: "${HOST_LDFLAGS:=}"
+: "${HOST_TAG:=}"
 CFLAGS="$HOST_OPT -g -std=gnu99 -fsigned-char -DUSE_TEST -DHAVE_DIRENT_H -DHAVE_STAT -DHAVE_MKDIR -DHAVE_FCNTL_H -w -I$PORT/src/game -I$PORT/src/platform"
 
 if [ "$BORG" = 1 ]; then
-	B="$PORT/build-host-borg"
+	B="$PORT/build-host-borg${HOST_TAG:+-$HOST_TAG}"
 	rm -rf "$B"
 	mkdir -p "$B/obj"
 
@@ -91,7 +114,7 @@ if [ "$BORG" = 1 ]; then
 	nsrc=$(wc -l < "$B/files.txt")
 
 	xargs -P 12 -n 1 -I{} sh -c \
-	  'gcc '"$BCFLAGS"' -c "$1" -o "'"$B"'/obj/$(basename "${1%.c}").o" 2>> "'"$B"'/cc.log" || echo "FAILED $1" >> "'"$B"'/fail.log"' \
+	  "$HOST_CC"' '"$BCFLAGS"' -c "$1" -o "'"$B"'/obj/$(basename "${1%.c}").o" 2>> "'"$B"'/cc.log" || echo "FAILED $1" >> "'"$B"'/fail.log"' \
 	  _ {} < "$B/files.txt"
 
 	nobj=$(ls "$B/obj" | wc -l)
@@ -104,13 +127,13 @@ if [ "$BORG" = 1 ]; then
 	fi
 
 	echo "host-build: linking angband-borg"
-	gcc -o "$B/angband-borg" "$B"/obj/*.o -lm || exit 1
+	"$HOST_CC" $HOST_LDFLAGS -o "$B/angband-borg" "$B"/obj/*.o -lm || exit 1
 	ls -l "$B/angband-borg"
 	echo "host-build: borg build ok"
 	exit 0
 fi
 
-B="$PORT/build-host"
+B="$PORT/build-host${HOST_TAG:+-$HOST_TAG}"
 rm -rf "$B"
 mkdir -p "$B/obj"
 
@@ -124,7 +147,7 @@ nsrc=$(wc -l < "$B/files.txt")
 
 # One gcc per source, 12 at a time. The -n1 keeps a single failure from hiding the rest.
 xargs -P 12 -n 1 -I{} sh -c \
-  'gcc '"$CFLAGS"' -c "$1" -o "'"$B"'/obj/$(basename "${1%.c}").o" 2>> "'"$B"'/cc.log" || echo "FAILED $1" >> "'"$B"'/fail.log"' \
+  "$HOST_CC"' '"$CFLAGS"' -c "$1" -o "'"$B"'/obj/$(basename "${1%.c}").o" 2>> "'"$B"'/cc.log" || echo "FAILED $1" >> "'"$B"'/fail.log"' \
   _ {} < "$B/files.txt"
 
 nobj=$(ls "$B/obj" | wc -l)
@@ -137,7 +160,7 @@ if [ -s "$B/fail.log" ]; then
 fi
 
 echo "host-build: linking"
-gcc -o "$B/angband-test" "$B"/obj/*.o -lm || exit 1
+"$HOST_CC" $HOST_LDFLAGS -o "$B/angband-test" "$B"/obj/*.o -lm || exit 1
 
 # Stage 040. The front end's UTF-8 decoder, checked on the host because its failure mode on
 # the device is silent: a wrong wide-character count just shifts a line by a cell.

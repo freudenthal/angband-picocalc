@@ -9,6 +9,8 @@
 #   angband-pico/tools/borg-run.sh play  <stem> <turns>    # run the borg, write .keys/.sync
 #   angband-pico/tools/borg-run.sh replay <stem> <keys> <turns>
 #
+# HOST_TAG and RUNNER pick a cross-compiled build and an emulator; see below.
+#
 # Everything lands under angband-pico/build-borg-run/, which is gitignored. The
 # savefile, the borg's own log and the two output files all live there, so one directory is
 # the whole record of a run.
@@ -27,7 +29,19 @@ WPORT="$(echo "$PORT" | sed 's|^/\([a-zA-Z]\)/|/mnt/\1/|')"
 MODE="${1:-}"
 [ -n "$MODE" ] || { echo "borg-run: birth | play <stem> <turns> | replay <stem> <keys> <turns>"; exit 2; }
 
-BIN="$PORT/build-host-borg/angband-borg"
+# HOST_TAG and RUNNER (harness stage 056). HOST_TAG selects the build directory that
+# tools/host-build.sh wrote with the same variable set, and RUNNER prefixes the binary. A
+# cross-compiled borg is not executable on this WSL, so it is run under an emulator:
+#
+#   HOST_TAG=arm RUNNER=qemu-arm-static angband-pico/tools/borg-run.sh replay arm1 borg.keys 5
+#
+# Both unset, this is the x86 build run directly, exactly as before stage 056. The outputs
+# still land in one build-borg-run/ whatever the architecture, because comparing an ARM
+# .sync against an x86 .sync is the entire point.
+HOST_TAG="${HOST_TAG:-}"
+RUNNER="${RUNNER:-}"
+
+BIN="$PORT/build-host-borg${HOST_TAG:+-$HOST_TAG}/angband-borg"
 [ -f "$BIN" ] || { echo "borg-run: $BIN not built. Run tools/host-build.sh --borg"; exit 2; }
 
 # NOT under build-host-borg/: tools/host-build.sh --borg does rm -rf on that directory, so a
@@ -70,7 +84,7 @@ restore_master() {
 
 case "$MODE" in
 	birth)
-		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $WPORT/build-host-borg/angband-borg -uHARNESS -d./lib -n -v"
+		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $RUNNER $WPORT/build-host-borg${HOST_TAG:+-$HOST_TAG}/angband-borg -uHARNESS -d./lib -n -v"
 		rc=$?
 		if [ -f "$RUN/lib/user/save/HARNESS" ]; then
 			cp "$RUN/lib/user/save/HARNESS" "$MASTER"
@@ -81,12 +95,12 @@ case "$MODE" in
 	play)
 		STEM="${2:-borg}"; TURNS="${3:-1000}"
 		restore_master
-		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $WPORT/build-host-borg/angband-borg -uHARNESS -d./lib -o'$STEM' -t'$TURNS'"
+		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $RUNNER $WPORT/build-host-borg${HOST_TAG:+-$HOST_TAG}/angband-borg -uHARNESS -d./lib -o'$STEM' -t'$TURNS'"
 		;;
 	replay)
 		STEM="${2:-replay}"; KEYS="${3:-borg.keys}"; TURNS="${4:-1000}"
 		restore_master
-		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $WPORT/build-host-borg/angband-borg -uHARNESS -d./lib -o'$STEM' -r'$KEYS' -t'$TURNS'"
+		wsl.exe -e bash -lc "cd '$WPORT/build-borg-run' && $RUNNER $WPORT/build-host-borg${HOST_TAG:+-$HOST_TAG}/angband-borg -uHARNESS -d./lib -o'$STEM' -r'$KEYS' -t'$TURNS'"
 		;;
 	*)
 		echo "borg-run: unknown mode '$MODE'"; exit 2
