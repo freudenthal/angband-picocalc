@@ -34,18 +34,44 @@
 # HOST_CC / HOST_LDFLAGS / HOST_TAG (harness stage 056) cross-compile the --borg binary for
 # another architecture; see the block beside HOST_OPT below. Unset, nothing changes.
 #
+# --arm (harness stage 057) is a NAMED SHORTHAND for the four variables that make this build
+# agree with the device. It is not a new capability: it is the one combination stage 056
+# measured, written down once so that a run log can quote a flag instead of a paragraph and
+# so that getting it wrong takes an effort. A caller that has already set any of the four
+# keeps its own value -- the shorthand fills in, it does not override.
+#
 # Everything is built under angband-pico/build-host*/, which is gitignored. The WSL side
 # works in the same directory through /mnt/c, so no state lives in the WSL home.
 
 set -u
 
 BORG=0
+ARM=0
 for a in "$@"; do
 	case "$a" in
 		--borg) BORG=1 ;;
-		*) echo "host-build: unknown argument '$a' (only --borg)"; exit 2 ;;
+		--arm)  ARM=1 ;;
+		*) echo "host-build: unknown argument '$a' (only --borg, --arm)"; exit 2 ;;
 	esac
 done
+
+# --arm: the stage 056 combination, by name. := and not = , so a caller that set one of
+# these on the command line still gets its own value and can vary one axis at a time --
+# HOST_OPT=-Os ... --arm is the device's optimisation level on the device's data model.
+if [ "$ARM" = 1 ]; then
+	: "${HOST_TAG:=arm}"
+	: "${HOST_CC:=arm-linux-gnueabihf-gcc}"
+	: "${HOST_LDFLAGS:=-static}"
+	: "${HOST_OPT:=-O1 -mthumb -fshort-enums}"
+	export HOST_TAG HOST_CC HOST_LDFLAGS HOST_OPT
+	echo "host-build: --arm -> HOST_TAG=$HOST_TAG HOST_CC=$HOST_CC HOST_LDFLAGS=$HOST_LDFLAGS HOST_OPT=$HOST_OPT"
+	# --arm without --borg would cross-compile the end-to-end suite, whose tests/run-tests
+	# runs the binary directly on this WSL. Refuse rather than fail in the test harness.
+	if [ "$BORG" != 1 ]; then
+		echo "host-build: --arm needs --borg (the cross build is the borg binary only)"
+		exit 2
+	fi
+fi
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WPORT="$(echo "$PORT" | sed 's|^/\([a-zA-Z]\)/|/mnt/\1/|')"

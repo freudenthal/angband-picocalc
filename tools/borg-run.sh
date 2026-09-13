@@ -9,7 +9,10 @@
 #   angband-pico/tools/borg-run.sh play  <stem> <turns>    # run the borg, write .keys/.sync
 #   angband-pico/tools/borg-run.sh replay <stem> <keys> <turns>
 #
-# HOST_TAG and RUNNER pick a cross-compiled build and an emulator; see below.
+# HOST_TAG and RUNNER pick a cross-compiled build and an emulator; see below. HOST_TAG=arm
+# on its own is enough since stage 057 -- RUNNER defaults to qemu-arm-static there:
+#
+#   HOST_TAG=arm angband-pico/tools/borg-run.sh replay a1 borg.keys 5
 #
 # Everything lands under angband-pico/build-borg-run/, which is gitignored. The
 # savefile, the borg's own log and the two output files all live there, so one directory is
@@ -38,7 +41,17 @@ MODE="${1:-}"
 # Both unset, this is the x86 build run directly, exactly as before stage 056. The outputs
 # still land in one build-borg-run/ whatever the architecture, because comparing an ARM
 # .sync against an x86 .sync is the entire point.
+#
+# RUNNER DEFAULTS TO qemu-arm-static WHEN HOST_TAG=arm (harness stage 057). An armhf binary
+# started without it fails with `Exec format error` from the WSL kernel, which says nothing
+# about what is actually missing; binfmt_misc is not assumed here, so there is no case in
+# which HOST_TAG=arm and an empty RUNNER is what the caller wanted. RUNNER= (set, empty) is
+# still honoured, for a bench that has binfmt_misc and wants to prove it.
 HOST_TAG="${HOST_TAG:-}"
+if [ -z "${RUNNER+set}" ] && [ "$HOST_TAG" = arm ]; then
+	RUNNER=qemu-arm-static
+	echo "borg-run: HOST_TAG=arm, RUNNER defaulted to $RUNNER"
+fi
 RUNNER="${RUNNER:-}"
 
 BIN="$PORT/build-host-borg${HOST_TAG:+-$HOST_TAG}/angband-borg"

@@ -84,6 +84,51 @@
 
 static FILE *sync_out;
 
+/* Declared here because the command mark below writes to it; opened in main(). */
+static FILE *keys_file;
+
+/* ---------------------------------------------------------------------------------------
+ * THE COMMAND MARK (picocalc-device-harness stage 057).
+ *
+ * The harness's lockstep runner has to decide, for every key it sends, whether a SYNC record
+ * is owed for it -- because a key that answers a prompt correctly answers with nothing, and
+ * a key in front of a level generation answers after seven or eight seconds. Stage 056 made
+ * it guess from the key name: a `>` or a `<` put it into a 180 s window and everything else
+ * got 8 s. That guess is wrong in both directions. It costs 8 s on each of the 183 keys in a
+ * 1,184-key run that answer a prompt, and it misses a generation that starts with no stairs
+ * key in front of it -- a trap door, a scroll of teleport level.
+ *
+ * THIS SIDE ALREADY KNOWS, FOR FREE. The host ran the same keys through the same game. A key
+ * that finished a command is exactly a key after which sync_end() fired; a key that finished
+ * nothing is one where the next key was asked for first. So the answer is written down as
+ * the keystream is written, one line after each key:
+ *
+ *   space
+ *   #+          this key COMPLETED a command; the SYNC record after it is its record
+ *   j
+ *   #-          this key completed nothing -- it answered a prompt or a -more-
+ *
+ * `#+` and `#-` are ordinary `#` comments, which specifications.md 8.6 has always allowed in
+ * a keystream, so a marked file still loads in the stage 055 and 056 drivers and is still a
+ * valid input to this build's own -r replay. Nothing about the key lines changed.
+ *
+ * THE VERDICT IS NOT KNOWN WHEN THE KEY IS WRITTEN, which is why there is a pending slot:
+ * the key is held back until either sync_end() fires (it completed a command) or the game
+ * asks for another key (it did not). The last key of a run is flushed by report_and_quit().
+ */
+static char pending_key[64];
+static bool pending;
+
+static void flush_pending(bool completed)
+{
+	if (!pending) return;
+	pending = false;
+	if (keys_file) {
+		fprintf(keys_file, "%s\n%s\n", pending_key, completed ? "#+" : "#-");
+		fflush(keys_file);
+	}
+}
+
 void sync_end(int32_t game_turn)
 {
 	char line[160];
@@ -98,6 +143,14 @@ void sync_end(int32_t game_turn)
 		fputs(line, sync_out);
 		fflush(sync_out);
 	}
+
+	/*
+	 * A record was just written, so the key still in hand is the one that finished the
+	 * command it describes. Done AFTER the record, so the two files can be read side by
+	 * side: the n-th `#+` in the keystream and the n-th line of the .sync are the same
+	 * command.
+	 */
+	flush_pending(true);
 }
 
 /** Where sync_end() writes from now on, and the record numbering restarts. */
@@ -123,6 +176,111 @@ static uint32_t sync_host_rng(void)
 {
 	return sync_rng_digest();
 }
+
+/* ---------------------------------------------------------------------------------------
+ * THE GENERATION TRACE (harness stage 057).
+ *
+ * Stage 056 proved the class of the stage 055 divergence -- the data model, 32-bit `long`
+ * and pointers against 64-bit -- by building the borg for arm-linux-gnueabihf and watching
+ * its first record become the DEVICE'S record, field for field. What it did not do is name
+ * the expression. This is the instrument that does, and the reason it is cheap is that
+ * there are now two host builds that disagree and NEITHER OF THEM IS THE DEVICE: the
+ * bisection is two desk runs and a diff, with no flash, no card and no bench.
+ *
+ * The core already signals seven events through dungeon generation (game-event.h:94-101)
+ * and they are used today only by wiz-stats.c. Registering a handler on all seven and
+ * printing the RNG fingerprint at each one turns `the caves differ` into `the generators
+ * agreed up to here and parted inside this builder`:
+ *
+ *   GEN LEVEL_START      classic rs=853891f9
+ *   GEN ROOM_START       simple rs=1a2b3c4d
+ *   GEN ROOM_SIZE        h=11 w=25 rs=...
+ *   GEN ROOM_SUBTYPE     moat rs=...
+ *   GEN ROOM_END         ok rs=...
+ *   GEN TUNNEL           nstep=42 npierce=6 ndug=31 dstart=27 dend=0 early=0 rs=...
+ *   GEN LEVEL_END        ok rs=...
+ *
+ * The first differing line of `diff x86.gen arm.gen` names the builder, and the `rs` on the
+ * line BEFORE it says whether the two generators were still together when that builder was
+ * entered. The plan asked for five events; all seven are registered because the two extra
+ * ones -- the size and the subtype a room draws before it builds anything -- are a free
+ * bisection step inside the builder the first five can only name.
+ *
+ * THERE IS NO RECORD NUMBER ON THESE LINES, deliberately. A counter would make every line
+ * after an inserted or dropped event differ, and diff could not resynchronise; without one
+ * the output re-aligns after the divergence and the shape of what follows is readable too.
+ *
+ * HOST ONLY. Nothing here is compiled for the device: main-pico.c does not include it, no
+ * game source is touched, and the device's object list does not change -- so harness
+ * invariant 2 has nothing to check on this edit. The device cannot answer these events
+ * anyway; it has no file to write them to and the whole point is that it does not need one.
+ */
+static FILE *gen_file;
+
+static void gen_line(const char *event, const char *fmt, ...)
+{
+	char detail[160];
+
+	if (!gen_file) return;
+
+	if (fmt) {
+		va_list vp;
+		va_start(vp, fmt);
+		vstrnfmt(detail, sizeof(detail), fmt, vp);
+		va_end(vp);
+	} else {
+		detail[0] = '\0';
+	}
+
+	fprintf(gen_file, "GEN %-16s %s%srs=%08lx\n",
+		event, detail, detail[0] ? " " : "",
+		(unsigned long)sync_host_rng());
+	fflush(gen_file);
+}
+
+static void gen_event(game_event_type type, game_event_data *data, void *user)
+{
+	(void)user;
+
+	switch (type) {
+	case EVENT_GEN_LEVEL_START:
+		gen_line("LEVEL_START", "%s", data->string ? data->string : "?");
+		break;
+	case EVENT_GEN_LEVEL_END:
+		gen_line("LEVEL_END", "%s", data->flag ? "ok" : "failed");
+		break;
+	case EVENT_GEN_ROOM_START:
+		gen_line("ROOM_START", "%s", data->string ? data->string : "?");
+		break;
+	case EVENT_GEN_ROOM_CHOOSE_SIZE:
+		gen_line("ROOM_SIZE", "h=%d w=%d", data->size.h, data->size.w);
+		break;
+	case EVENT_GEN_ROOM_CHOOSE_SUBTYPE:
+		gen_line("ROOM_SUBTYPE", "%s", data->string ? data->string : "?");
+		break;
+	case EVENT_GEN_ROOM_END:
+		gen_line("ROOM_END", "%s", data->flag ? "ok" : "failed");
+		break;
+	case EVENT_GEN_TUNNEL_FINISHED:
+		gen_line("TUNNEL", "nstep=%d npierce=%d ndug=%d dstart=%d dend=%d early=%d",
+			data->tunnel.nstep, data->tunnel.npierce, data->tunnel.ndug,
+			data->tunnel.dstart, data->tunnel.dend,
+			data->tunnel.early ? 1 : 0);
+		break;
+	default:
+		break;
+	}
+}
+
+static game_event_type gen_events[] = {
+	EVENT_GEN_LEVEL_START,
+	EVENT_GEN_LEVEL_END,
+	EVENT_GEN_ROOM_START,
+	EVENT_GEN_ROOM_CHOOSE_SIZE,
+	EVENT_GEN_ROOM_CHOOSE_SUBTYPE,
+	EVENT_GEN_ROOM_END,
+	EVENT_GEN_TUNNEL_FINISHED,
+};
 
 /* cmd-misc.c, under ALLOW_BORG. Declared there and nowhere public. */
 extern void do_cmd_borg(void);
@@ -161,7 +319,6 @@ static int	   opt_new       = 0;		/* -n: birth a character and save it */
 /* ---------------------------------------------------------------------------------------
  * State.
  */
-static FILE *keys_file;
 static FILE *sync_file;
 
 static long   keys_written;
@@ -289,6 +446,14 @@ static clock_t run_t0;
  */
 static void report_and_quit(void)
 {
+	/*
+	 * The last key of a run has nothing after it -- no record fired and no further key
+	 * was asked for -- so its verdict is settled here. It completed nothing that this
+	 * process saw, which is what `#-` says, and a keystream whose last key carried no
+	 * mark at all would be refused by the driver as partly marked.
+	 */
+	flush_pending(false);
+
 	double secs = (double)(clock() - run_t0) / CLOCKS_PER_SEC;
 
 	printf("borg: stopped after %lu commands, %ld keys, %.1f s\n",
@@ -450,10 +615,14 @@ static void record_key(struct keypress k)
 
 	attach_sync_file();
 
-	if (keys_file) {
-		fprintf(keys_file, "%s\n", name);
-		fflush(keys_file);
-	}
+	/*
+	 * The game is asking for another key, so whatever is still in hand finished no
+	 * command: it answered a prompt, or a -more-, and left the game inside
+	 * cmd_get_hook(). Flush it as `#-` and hold this one in its place.
+	 */
+	flush_pending(false);
+	my_strcpy(pending_key, name, sizeof(pending_key));
+	pending = true;
 	keys_written++;
 }
 
@@ -609,6 +778,16 @@ static bool replay_load(const char *path)
 		n = strlen(s);
 		while (n > 0 && (s[n - 1] == '\n' || s[n - 1] == '\r')) s[--n] = '\0';
 		if (n == 0) continue;
+
+		/*
+		 * Blank lines and # comments are allowed in a keystream and always have been
+		 * (specifications.md 8.6); this reader simply never met one, because nothing
+		 * wrote them. Stage 057's command marks ARE # comments, so the file this build
+		 * writes had become a file this build could not read back. Skipping them here
+		 * is what keeps -r a valid consumer of its own -o output, and it is the same
+		 * rule harness/lockstep.py:load_keystream_marked() follows.
+		 */
+		if (s[0] == '#') continue;
 
 		if (!key_code(s, &code)) {
 			printf("borg: keystream line %ld: cannot decode '%s'\n",
@@ -997,10 +1176,37 @@ int main(int argc, char *argv[])
 		return 2;
 	}
 	if (opt_replay && keys_file) { fclose(keys_file); keys_file = NULL; }
+	if (keys_file) {
+		/* What the marks mean, in the file, for whoever opens it next. */
+		fprintf(keys_file,
+			"# Keystream, one harness key name per line "
+			"(specifications.md 8.3).\n"
+			"# The line after each key says what that key did on this host:\n"
+			"#   %s  it COMPLETED a player command and the next SYNC record "
+			"is its record\n"
+			"#   %s  it completed nothing -- it answered a prompt or a "
+			"-more-\n"
+			"# Both are ordinary # comments, so a reader that does not know "
+			"them skips them.\n",
+			"#+", "#-");
+		fflush(keys_file);
+	}
 
 	strnfmt(path, sizeof(path), "%s.sync", opt_out);
 	sync_file = fopen(path, "w");
 	if (!sync_file) {
+		printf("borg: cannot write %s: %s\n", path, strerror(errno));
+		return 2;
+	}
+
+	/*
+	 * The generation trace (stage 057). Opened unconditionally: it costs one line per
+	 * room on a run that generates a level and nothing at all on one that does not, and
+	 * a trace that has to be asked for is a trace nobody has when it is wanted.
+	 */
+	strnfmt(path, sizeof(path), "%s.gen", opt_out);
+	gen_file = fopen(path, "w");
+	if (!gen_file) {
 		printf("borg: cannot write %s: %s\n", path, strerror(errno));
 		return 2;
 	}
@@ -1018,6 +1224,13 @@ int main(int argc, char *argv[])
 	init_display();
 	init_angband();
 	textui_init();
+
+	/*
+	 * Registered AFTER init_angband(), which is where the event table is set up, and
+	 * before play_game(), so the first generation of the run is traced whether it comes
+	 * from loading the savefile or from the first `>` of the keystream.
+	 */
+	event_add_handler_set(gen_events, N_ELEMENTS(gen_events), gen_event, NULL);
 
 	/*
 	 * Capture the borg's own hook BEFORE anything is played.
