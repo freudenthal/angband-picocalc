@@ -52,6 +52,7 @@
 #include "ui-input.h"
 #include "ui-output.h"
 #include "ui-term.h"
+#include "z-file.h"
 #include "z-rand.h"
 #include "z-util.h"
 
@@ -315,6 +316,107 @@ static void init_files(void)
 }
 
 // ---------------------------------------------------------------------------------------
+// ANGBAND_SAVE_RESTORE -- the optimisation bench's savefile restore. Stage 065 item 1.
+//
+// OFF IN THE SHIPPED BUILD, because it destroys a player's game. Everything below is
+// inside the #ifdef and the whole file's .text is byte-identical without it.
+//
+// WHY IT EXISTS. Angband writes its savefile back while it plays. After a 20-key probe on
+// 2026-09-13 the card's PicoCalc had gone from the master's 37,500 B / md5 e6289abd... to
+// 37,616 B / 22985b3a..., and although the character was unchanged the RNG state was not:
+// si=19 rs=853891f9 became si=2 rs=e9a86912. A second lockstep run off that card diverges
+// at command 1 for a reason that has nothing to do with either game. So without this, every
+// optimisation round needs a hand on the card to restage the master -- which is the whole
+// difference between an optimisation loop and a series of bench visits.
+//
+// THE CARD IS WRITTEN BY THE DEVICE, which already writes it on every autosave, so the
+// harness's invariant 9 (the harness never touches the card) is untouched.
+//
+// IT IS A COPY AND NOT A RENAME. Stage 030 found rename() returns FR_EXIST on this
+// filesystem rather than replacing, so the master would be consumed on the first round and
+// the second would run off whatever the first left behind.
+//
+// COST: 37.5 KB at stage 030's ~145 KB/s is about 0.26 s, once, at boot, and boot is
+// outside every bracket the turn log measures. The figure is printed so a run log can
+// quote it, and it is also a free re-check of the card write path on every round.
+#ifdef ANGBAND_SAVE_RESTORE
+
+#define SAVE_RESTORE_MASTER "/angband/lib/user/save/PicoCalc.master"
+
+// 4 KB, static rather than automatic, for the reason init_files() gives about its path
+// buffer: nothing large belongs in a frame that then calls play_game(). It costs 4 KB of
+// bss in a build that already carries the turn log and the SYNC emitter, and none at all
+// in the shipped build.
+#define SAVE_RESTORE_CHUNK 4096
+static char save_restore_buf[SAVE_RESTORE_CHUNK];
+
+static void restore_master_savefile(void)
+{
+    ang_file *src, *dst;
+    uint64_t t0, t1;
+    size_t total = 0;
+    bool ok = true;
+    int n;
+
+    // Not an error. A card with no master is a card meant to be played from, and a build
+    // with the option on must still boot on one.
+    if (!file_exists(SAVE_RESTORE_MASTER))
+    {
+        boot_say("save-restore: no PicoCalc.master on the card, leaving the savefile alone");
+        return;
+    }
+
+    t0 = time_us_64();
+
+    src = file_open(SAVE_RESTORE_MASTER, MODE_READ, FTYPE_RAW);
+    if (!src)
+    {
+        boot_say("save-restore: cannot open %s", SAVE_RESTORE_MASTER);
+        return;
+    }
+
+    // FTYPE_RAW and NOT FTYPE_SAVE. MODE_WRITE with FTYPE_SAVE is the exclusive create
+    // (z-file.c:1012, and stage 030 wrote the PICOCALC half of it): it refuses a name that
+    // already exists, which is exactly the name this has to overwrite. FTYPE_RAW takes the
+    // plain fopen(..., "wb") branch, which truncates.
+    dst = file_open(savefile, MODE_WRITE, FTYPE_RAW);
+    if (!dst)
+    {
+        file_close(src);
+        boot_say("save-restore: cannot write %s", savefile);
+        return;
+    }
+
+    while ((n = file_read(src, save_restore_buf, sizeof(save_restore_buf))) > 0)
+    {
+        if (!file_write(dst, save_restore_buf, (size_t)n))
+        {
+            ok = false;
+            break;
+        }
+        total += (size_t)n;
+    }
+
+    // file_read() returns -1 on a read error and 0 at end of file, so a short copy that
+    // looks clean is a real possibility and has to be said out loud: a half-written
+    // savefile diverges at command 1 and looks like an optimisation bug.
+    if (n < 0)
+        ok = false;
+
+    if (!file_close(dst))
+        ok = false;
+    file_close(src);
+
+    t1 = time_us_64();
+
+    boot_say("save-restore: %s %u B in %lu ms (boot only, outside every measured bracket)",
+             ok ? "copied" : "FAILED after", (unsigned)total,
+             (unsigned long)((t1 - t0) / 1000u));
+}
+
+#endif /* ANGBAND_SAVE_RESTORE */
+
+// ---------------------------------------------------------------------------------------
 
 int main(void)
 {
@@ -364,6 +466,13 @@ int main(void)
 
     init_files();
     boot_say("savefile %s", savefile);
+
+    // Stage 065 item 1. After init_files(), because it needs `savefile` set and
+    // create_needed_dirs() to have made user/save/; before play_game(GAME_LOAD), which is
+    // what reads the file. OFF in the shipped build.
+#ifdef ANGBAND_SAVE_RESTORE
+    restore_master_savefile();
+#endif
 
     seed_rng();
 

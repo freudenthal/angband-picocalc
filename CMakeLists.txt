@@ -117,6 +117,26 @@ option(ANGBAND_SERIAL_SCREEN "Harness stage 045: a term dump on 0x1C in check_ev
 # file in src/host/main-borg.c.
 option(ANGBAND_SYNC "Harness stage 055: one SYNC line per completed player command" OFF)
 
+# ANGBAND_SAVE_RESTORE (stage 065 item 1) -- the bench's savefile restore. OFF in the
+# shipped build, and the run log says so every time this option is quoted.
+#
+#   cmake -B build-pico2-bench -S . ... -DANGBAND_SAVE_RESTORE=ON
+#
+# With it ON, src/main.c copies /angband/lib/user/save/PicoCalc.master over
+# /angband/lib/user/save/PicoCalc at boot, after init_files() and before play_game().
+# With it OFF the whole thing is inside #ifdef and .text is byte-identical -- the same
+# rule ANGBAND_SERIAL_KEYS and ANGBAND_SYNC are held to.
+#
+# WHY. Angband writes its savefile back while it plays (measured 2026-09-13: a 20-key probe
+# moved the RNG state from si=19 rs=853891f9 to si=2 rs=e9a86912 with the character
+# unchanged), so two lockstep runs from one card are two different games and the second
+# diverges at command 1. Without the restore, every optimisation round needs a hand on the
+# card. With it, the master is staged once, by hand, ever.
+#
+# IT IS DANGEROUS AND THAT IS WHY IT IS AN OPTION: on a card carrying a played game it
+# destroys that game on the next boot. Nothing in sdcard-pico2/ is built with it.
+option(ANGBAND_SAVE_RESTORE "Stage 065: copy PicoCalc.master over the savefile at boot" OFF)
+
 # The SYNC line is only worth emitting to something that is driving the game, and the only
 # thing that can drive it over serial is the stage 030 key path. Without it the option would
 # print a line no one asked for on every command of a hand-played session -- and, worse, a
@@ -559,6 +579,11 @@ target_compile_definitions(angband PRIVATE
     # alone would compile sync.c and never call it. angband_core gets it just below, the way
     # ANGBAND_TURN_LOG does, and for the same reason.
     $<$<BOOL:${ANGBAND_SYNC}>:ANGBAND_SYNC=1>
+    # Stage 065 item 1. This one reaches THIS TARGET ONLY: the restore lives in src/main.c,
+    # which nothing else compiles, and no src/game/ source knows it exists. That is the
+    # point of putting it there -- platform-cmp.sh and the PORT: hunk invariant have
+    # nothing to check, because no game source was edited.
+    $<$<BOOL:${ANGBAND_SAVE_RESTORE}>:ANGBAND_SAVE_RESTORE=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
