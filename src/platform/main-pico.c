@@ -18,6 +18,7 @@
 
 #include "pico/stdlib.h"
 
+#include "battery.h"
 #include "font5x10.h"
 #include "keyboard.h"
 #include "lcd.h"
@@ -655,6 +656,8 @@ void sync_end(int32_t game_turn)
 #endif
 // -----------------------------------------------------------------------------------------
 
+void (*pico_battery_hook)(void) = NULL;
+
 static errr check_events(bool wait)
 {
     kbd_event_t e;
@@ -691,6 +694,15 @@ static errr check_events(bool wait)
             break;
 
         sleep_ms(1);
+
+        // PORT: stage 100. The battery, on the waiting branch only and after the sleep, so
+        // the ~4 ms I2C read lands in idle time the turn instrument subtracts. The
+        // non-waiting poll above is inside the turn (stage 075's TURNLOG_KBPOLL) and never
+        // reaches this line. battery_poll() is one time_us_64() and a compare except once
+        // every BATTERY_POLL_SECONDS.
+        battery_poll();
+        if (pico_battery_hook && battery_changed())
+            pico_battery_hook();
     }
 
     if (wait)

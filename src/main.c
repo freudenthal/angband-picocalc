@@ -41,6 +41,7 @@
 #endif
 #include "pico/stdlib.h"
 
+#include "platform/battery.h"
 #include "platform/lcd.h"
 #include "platform/main-pico.h"
 #include "platform/psram_heap.h"
@@ -53,6 +54,9 @@
 #include "game-event.h"
 #include "game-world.h"
 #include "init.h"
+#include "message.h"
+#include "player-calcs.h"
+#include "player.h"
 #include "ui-display.h"
 #include "ui-game.h"
 #include "ui-init.h"
@@ -449,6 +453,99 @@ static void restore_master_savefile(void)
 #endif /* ANGBAND_SAVE_RESTORE */
 
 // ---------------------------------------------------------------------------------------
+// Stage 100. The battery: the status-row redraw while idle, the two warnings, and the one
+// automatic save. The field itself is drawn by ui-display.c's prt_battery(); the logic
+// both use is in platform/battery.h, and the I2C read is in platform/battery.c.
+
+/**
+ * main-pico.c's pico_battery_hook: the register changed while the game waits for a key.
+ *
+ * The flag is always set, so the next ordinary redraw draws the new value. The redraw is
+ * done HERE only at the top-level command prompt (inkey_flag) with no saved screen on top
+ * of the map: the game is inside Term_inkey() and nothing else will draw until a key
+ * arrives, and at that prompt handle_stuff() has already run, so redraw_stuff() has only
+ * the status row to do. Anywhere else -- a menu, a -more-, a store, birth -- it waits.
+ * The cursor is put back exactly, "useless" flag included, because the prompt that is
+ * waiting owns it.
+ */
+static void pico_battery_changed(void)
+{
+    int cx, cy;
+    bool cu;
+
+    if (!character_generated || !player || !player->upkeep)
+        return;
+
+    player->upkeep->redraw |= PR_STATUS;
+
+    if (!inkey_flag || screen_save_depth || player->is_dead)
+        return;
+
+    cx = Term->scr->cx;
+    cy = Term->scr->cy;
+    cu = Term->scr->cu;
+
+    redraw_stuff(player);
+
+    Term->scr->cx = cx;
+    Term->scr->cy = cy;
+    Term->scr->cu = cu;
+    Term_fresh();
+}
+
+static struct battery_warn battery_warning;
+
+/**
+ * A warning is due. Out of line and in flash: it runs at most a few times per boot.
+ *
+ * The save is upstream's own save_game(), the one Ctrl-S reaches, called from the same
+ * place in process_player() that a Ctrl-S command runs from -- after handle_stuff(), before
+ * the next command is taken. Once per boot, and not in an arena: that is a temporary level
+ * the effect handlers special-case throughout, and the port has no reason to find out how
+ * a savefile taken inside one reloads. The warning is still given there.
+ */
+static void pico_battery_warn(int threshold, int percent)
+{
+    if (threshold == BATTERY_WARN_CRITICAL && !battery_warning.saved
+        && !player->upkeep->arena_level)
+    {
+        battery_warning.saved = true;
+        msg("Your battery is at %d%%. The game will now be saved.", percent);
+        save_game();
+        return;
+    }
+
+    msg("Your battery is at %d%%.", percent);
+}
+
+/**
+ * EVENT_REFRESH, signalled from process_player() before each command. In SRAM like the
+ * code that signals it, because it runs every turn: two inline reads of .bss and a return,
+ * with no call into flash unless a warning is due.
+ *
+ * NOT EVENT_PLAYERMOVED, which the stage plan named: update_stuff() signals that from
+ * inside its PU_PANEL branch, and save_game() calls handle_stuff() -- a save from there
+ * would re-enter the update it was called from.
+ */
+static void __not_in_flash_func(pico_battery_refresh)(game_event_type type,
+                                                      game_event_data *data, void *user)
+{
+    int percent, threshold;
+    bool charging;
+
+    (void)type;
+    (void)data;
+    (void)user;
+
+    if (!character_generated || player->is_dead || !battery_read(&percent, &charging))
+        return;
+
+    threshold = battery_warn_step(&battery_warning, percent, charging);
+    if (threshold)
+        pico_battery_warn(threshold, percent);
+}
+
+// ---------------------------------------------------------------------------------------
 
 int main(void)
 {
@@ -542,6 +639,10 @@ int main(void)
 #endif
 
     textui_init();
+
+    // Stage 100. The battery field, the warnings and the automatic save.
+    pico_battery_hook = pico_battery_changed;
+    event_add_handler(EVENT_REFRESH, pico_battery_refresh, NULL);
 
 #ifdef ANGBAND_CONSOLE
     // The same three numbers on the panel, on the row pause_line() is about to sit under.

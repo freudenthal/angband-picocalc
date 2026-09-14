@@ -64,6 +64,10 @@
  * See src/platform/turnlog.h.
  */
 #include "turnlog.h"
+#ifdef PICOCALC
+/* PORT: angband-picocalc stage 100. The battery field; see prt_battery(). */
+#include "battery.h"
+#endif
 
 /**
  * There are a few functions installed to be triggered by several 
@@ -1350,6 +1354,37 @@ static void update_statusline_aux(int row, int col)
 		col += status_handlers[i](row, col);
 }
 
+#ifdef PICOCALC
+/**
+ * PORT: angband-picocalc stage 100. The battery charge, "Bat 87%" or "Chg 87%", in the
+ * last BATTERY_FIELD_COLS columns of the status row.
+ *
+ * Right-aligned and drawn AFTER the status words, so on a full status line it overwrites
+ * the tail of the last word rather than being clipped: the battery is never lost, a status
+ * word sometimes is, and the player can read that word again next turn. Nothing is drawn
+ * when there is no reading (battery.h). The reading is a byte in .bss; this function runs
+ * from SRAM with the rest of ui-display.c and makes no call into flash to get it.
+ */
+static void prt_battery(int row)
+{
+	static const uint8_t level_colour[] = {
+		COLOUR_L_BLUE,	/* BATTERY_LEVEL_CHARGING */
+		COLOUR_L_GREEN,	/* BATTERY_LEVEL_GOOD */
+		COLOUR_YELLOW,	/* BATTERY_LEVEL_LOW */
+		COLOUR_L_RED	/* BATTERY_LEVEL_CRITICAL */
+	};
+	char field[BATTERY_FIELD_COLS + 1];
+	int percent;
+	bool charging;
+
+	if (!battery_read(&percent, &charging)) return;
+
+	strnfmt(field, sizeof(field), "%s%3d%%", charging ? "Chg" : "Bat", percent);
+	c_put_str(level_colour[battery_level(percent, charging)], field, row,
+		Term->wid - BATTERY_FIELD_COLS);
+}
+#endif
+
 /**
  * Print the status line.
  */
@@ -1363,6 +1398,11 @@ static void update_statusline(game_event_type type, game_event_data *data, void 
 	}
 
 	update_statusline_aux(row, COL_MAP);
+
+#ifdef PICOCALC
+	/* PORT: stage 100. The battery, right-aligned on the same row. */
+	prt_battery(row);
+#endif
 }
 
 

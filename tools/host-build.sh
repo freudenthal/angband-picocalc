@@ -15,6 +15,7 @@
 #
 # Expected output:
 #   host-build: utf8-test 38/38 checks passed
+#   host-build: battery-test N/N checks passed
 #   Total: 5/5
 #   depth: 50  followed by  HEAP[L50] live=...
 #
@@ -199,6 +200,22 @@ if "$B/utf8-test" > "$B/utf8.log" 2>&1; then
 else
 	echo "host-build: utf8-test FAILED"
 	cat "$B/utf8.log"
+	exit 1
+fi
+echo
+
+# Stage 100. The battery field's logic (src/platform/battery.h): the register decode, the
+# colour level, the field width and the 15 % / 5 % warning state machine. The host has no
+# PICOCALC and cannot draw the field, and a device session cannot reach 5 %, so this is the
+# check of the logic. Header-only: battery.c needs the SDK and is not compiled here.
+echo "host-build: front end unit checks (battery.h)"
+gcc -O1 -std=gnu99 -fsigned-char -Wall -Wextra -Werror -I"$PORT/src/platform" \
+	-o "$B/battery-test" "$PORT/tools/battery-test.c" || exit 1
+if "$B/battery-test" > "$B/battery.log" 2>&1; then
+	echo "host-build: battery-test $(grep -c '^ok ' "$B/battery.log")/$(grep -c '^ok \|^FAIL ' "$B/battery.log") checks passed"
+else
+	echo "host-build: battery-test FAILED"
+	cat "$B/battery.log"
 	exit 1
 fi
 echo

@@ -46,6 +46,13 @@ extern "C"
     uint32_t pico_term_last_fresh_calls(void);
     uint32_t pico_term_last_fresh_cells(void);
 
+    // Stage 100. Called from check_events(), on its waiting branch, when the battery
+    // register changed (battery.h). NULL means nobody is listening, which is the case in
+    // angband_termdiag. The game sets it in src/main.c to redraw the status row: while the
+    // game waits for a key it is inside Term_inkey() and gets no other chance to draw, so
+    // a redraw flag set here would wait for the next keypress.
+    extern void (*pico_battery_hook)(void);
+
 #ifdef __cplusplus
 }
 #endif

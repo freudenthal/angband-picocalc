@@ -167,6 +167,17 @@ foreach(needs_console ANGBAND_SERIAL_KEYS ANGBAND_SERIAL_SCREEN ANGBAND_SYNC ANG
     endif()
 endforeach()
 
+# BATTERY_FAKE (stage 100) -- a constant in place of the battery register, so the 15 % and
+# 5 % warnings and the automatic save can be seen in one session. Empty (off) by default.
+#   cmake -B build-pico2-battery -S . ... -DANGBAND_CONSOLE=ON -DBATTERY_FAKE=14
+# Console builds only: a release built with it would show a charge it never measured.
+set(BATTERY_FAKE "" CACHE STRING "Stage 100: fake battery register byte (console builds only)")
+if(NOT BATTERY_FAKE STREQUAL "" AND NOT ANGBAND_CONSOLE)
+    message(FATAL_ERROR
+        "BATTERY_FAKE needs ANGBAND_CONSOLE=ON: it is a test override and the shipped build "
+        "must show the real register. Configure with -DANGBAND_CONSOLE=ON.")
+endif()
+
 # The SYNC line is only worth emitting to something that is driving the game, and the only
 # thing that can drive it over serial is the stage 030 key path. Without it the option would
 # print a line no one asked for on every command of a hand-played session -- and, worse, a
@@ -382,7 +393,17 @@ add_library(angband_platform STATIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/southbridge.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/keyboard.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/font5x10.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/battery.c
 )
+
+# Stage 100. battery.c is port-written and knows nothing about the game: it reads south-bridge
+# register 0x0B and keeps the byte (battery.h). The BATTERY_FAKE override reaches this one
+# source and nothing else in the library, with ANGBAND_CONSOLE beside it so battery.c's own
+# #error can check the pair.
+if(NOT BATTERY_FAKE STREQUAL "")
+    set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/battery.c
+        PROPERTIES COMPILE_DEFINITIONS "BATTERY_FAKE=${BATTERY_FAKE};ANGBAND_CONSOLE=1")
+endif()
 
 target_include_directories(angband_platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src        # platform/...

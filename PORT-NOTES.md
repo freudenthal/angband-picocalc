@@ -93,7 +93,7 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-**Twenty-four** vendored files are edited (stage 075 added `player-calcs.c`, `trap.c`, `z-bitflag.c` and `z-bitflag.h`), and `ui-game.c` carries one more hunk since harness
+**Twenty-four** vendored files are edited (stage 100 added hunks to `ui-display.c`, which was already one of them; section 8) (stage 075 added `player-calcs.c`, `trap.c`, `z-bitflag.c` and `z-bitflag.h`), and `ui-game.c` carries one more hunk since harness
 stage 055 (section 6). Stage 070 run 3 added `cave.h`, `cave.c` and `cave-square.c` and
 further hunks in `cave-view.c` and `game-world.c` (section 7) — **the first edits in this
 tree that change what the game computes**, each proved by the desk pre-check and a lockstep
@@ -388,6 +388,30 @@ in display columns 8-56 of 64; the quote is re-wrapped to 40 columns at indent 8
 not five), and the two link lines and the help line are placed by hand. The longest line is
 64 bytes. `tools/stage-card.sh` now runs the 64-byte check on every staging.
 
+### 8. `src/game/ui-display.c` — the battery field on the status row (stage 100)
+
+Three hunks, all under `#ifdef PICOCALC`, so the host build and its screens are upstream's:
+`#include "battery.h"` after the `turnlog.h` include; `prt_battery(row)`, a new static
+function above `update_statusline()`; and the call to it at the end of
+`update_statusline()`, after `update_statusline_aux()`.
+
+`prt_battery()` draws `Bat 87%` or `Chg 87%`, seven columns, at `Term->wid - 7` on the status
+row, in `L_BLUE` while charging, else `L_GREEN` at 50 % and above, `YELLOW` at 20-49 % and
+`L_RED` below 20 %. Nothing is drawn when the register has given no reading (0).
+
+**Why right-aligned and drawn last.** On a full status line the field overwrites the tail of
+the last status word rather than being clipped by `Term_putstr()`. The battery is never lost;
+a status word sometimes is, and the status row is redrawn every turn. The alternatives — the
+top bar's row 0 after the race and class, or one glyph in the map's last column — were
+considered in the stage plan and not taken.
+
+**Why it costs the turn nothing measurable.** `ui-display.c` is in `ANGBAND_SRAM_OBJECTS`, and
+the reading is a byte in `.bss` decoded by `static inline` functions in `battery.h`. The
+function makes no call into flash-resident code. The I2C read is not here: it is in
+`src/platform/battery.c`, called only from `main-pico.c`'s `check_events()` on its waiting
+branch, at most every 30 s. The warnings and the automatic save at 5 % are in `src/main.c`
+(an `EVENT_REFRESH` handler), not in any vendored file.
+
 ## The platform layer
 
 `src/platform/` is not vendored from Angband. It is the PicoCalc hardware layer, shared with
@@ -406,6 +430,7 @@ never write a second LCD driver).
 | `keyboard.c`, `keyboard.h` | copied byte-identical from `../tinyrogue-pico/src/platform/` | 040 |
 | `main-pico.c`, `main-pico.h` | port-written here | 040 |
 | `utf8.c`, `utf8.h` | port-written here | 040 |
+| `battery.c`, `battery.h` | port-written here. `battery.h` is plain C with no SDK header, because `ui-display.c` includes it | 100 |
 
 Nothing was added to `src/platform/` by stage 050: the game's entry point is
 `src/main.c`, not a platform file, because it is Angband's `main()` and not hardware.

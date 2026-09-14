@@ -87,10 +87,20 @@ At the next power-on the game starts without the menu.
 * **High scores:** `E:\angband\lib\user\scores\scores.raw`.
 * **Help:** `?`. **Knowledge menu:** `~`.
 * **Keys:** the original Angband keyset. Ctrl-letter, Esc, Tab, Enter, Backspace, Delete, the
-  arrows and F1..F10 all work. The keyboard has no numeric keypad. Alt+comma, Alt+period,
-  Alt+space and Alt+B control the backlight and the battery display and never reach the game.
+  arrows and F1..F10 all work. The keyboard has no numeric keypad. Alt+comma, Alt+period and
+  Alt+space control the backlight and never reach the game. Alt+B makes the keyboard LED
+  flash the charge; the game shows it on the status row.
 * **Screen:** 64 columns by 32 rows. The status panel is at the top of the screen
   (`SIDEBAR_TOP`), so the map uses all 64 columns.
+* **Battery:** the right end of the status row (row 5) shows `Bat 87%` on battery and
+  `Chg 87%` while charging. The colour is green at 50 % and above, yellow at 20-49 %, red
+  below 20 %, and blue while charging. The game reads the charge every 30 seconds while it
+  waits for a key. On a full status row, the field covers the end of the last status word.
+* **Low battery:** when the charge goes to 15 % or less, the game shows
+  `Your battery is at 15%.` (the real value). When it goes to 5 % or less, the game shows
+  `Your battery is at 5%. The game will now be saved.` and saves the game, one time for each
+  start. The messages do not show while the unit charges. They show again after the charge
+  goes above 20 %.
 * **No crash save.** If the board stops, you lose the game since the last save.
 
 The release build has no serial console and does not wait for a USB terminal. The panel

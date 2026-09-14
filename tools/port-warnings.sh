@@ -45,7 +45,8 @@ src/platform/utf8.c
 src/platform/psram_heap.c
 src/platform/sd_fs.c
 src/platform/syscalls.c
-src/platform/turnlog.c"
+src/platform/turnlog.c
+src/platform/battery.c"
 
 python - "$PORT" "$TREES" "$FILES" <<'PYEOF'
 import os, re, subprocess, sys
