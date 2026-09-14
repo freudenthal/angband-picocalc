@@ -630,10 +630,26 @@ set(ANGBAND_SRAM_OBJECTS
     mon-move mon-util mon-predicate ui-map
     z-util z-rand z-form z-textblock player-calcs player-util player-timed
     ui-display ui-term ui-output ui-event ui-input ui-keymap ui-game game-event game-input
-    cmd-core obj-gear obj-util obj-knowledge trap mon-list obj-list ui-obj-list ui-mon-list)
+    cmd-core obj-gear obj-util obj-knowledge trap mon-list obj-list ui-obj-list ui-mon-list
+    cmd-cave obj-pile obj-desc obj-ignore message mon-msg player-path ui-target ui-menu
+    project project-mon project-feat project-player mon-attack mon-blows mon-spell
+    player-attack)
+# Not game objects, and named verbatim. THIS TOOLCHAIN'S NEWLIB IS libg.a, NOT libc.a, so
+# the SDK's own `*libc.a:` exclusion never matched and malloc/free ran from flash while
+# walking free lists in the PSRAM heap -- the stage 045 shape exactly. The allocator's
+# members, the SDK's malloc wrapper, and the string functions the game calls per command.
+set(ANGBAND_SRAM_LIBRARY_MEMBERS
+    *libg.a:libc_a-mallocr.o *libg.a:libc_a-freer.o *libg.a:libc_a-reallocr.o
+    *libg.a:libc_a-callocr.o *libg.a:libc_a-malloc.o *libg.a:libc_a-mlock.o
+    *libg.a:libc_a-strcmp.o *libg.a:libc_a-strchr.o *libg.a:libc_a-strcpy.o
+    *libg.a:libc_a-strlen-stub.o *libg.a:libc_a-strlen.o *libg.a:libc_a-strstr.o *libg.a:libc_a-ctype_.o
+    */pico_malloc/malloc.c.obj)
 set(ANGBAND_SRAM_PATTERNS "")
 foreach(obj IN LISTS ANGBAND_SRAM_OBJECTS)
     string(APPEND ANGBAND_SRAM_PATTERNS " */src/game/${obj}.c.obj")
+endforeach()
+foreach(member IN LISTS ANGBAND_SRAM_LIBRARY_MEMBERS)
+    string(APPEND ANGBAND_SRAM_PATTERNS " ${member}")
 endforeach()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/link/default_text_excludes.incl.in
                ${CMAKE_CURRENT_BINARY_DIR}/link-gen/default_text_excludes.incl @ONLY)
