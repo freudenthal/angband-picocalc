@@ -380,7 +380,7 @@ def check_boot(capture, saved):
 
 
 def lockstep(capture, limit):
-    rule("LOCKSTEP: %d commands, the host's keys, the host's answers" % limit)
+    rule("LOCKSTEP: %d keys, the host's keys, the host's answers" % limit)
     argv = [sys.executable, HARNESS, "lockstep", KEYS, HOSTSYNC, "--out", capture]
     if limit:
         argv += ["--limit", str(limit)]
@@ -746,7 +746,9 @@ def main(argv):
     p.add_argument("tag", nargs="?", help="the round's name; files land in "
                                           ".llm/scratch/bench/<tag>.*")
     p.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
-                   help="commands to play (default %d; the full stream is 1001)" % DEFAULT_LIMIT)
+                   help="KEYS to send, not commands (default %d = 229 commands; "
+                        "1001 keys = 849 commands; the whole stream is 1,184 keys = 1,001 "
+                        "commands)" % DEFAULT_LIMIT)
     p.add_argument("--compare-to", metavar="TAG",
                    help="print turnlog.py --compare against this earlier tag")
     p.add_argument("--sweep", metavar="PREFIX", nargs="?", const="sweep",
