@@ -584,7 +584,8 @@ angband-pico/tools/compile-sweep.sh      # the suite, part 1: cross-compile swee
 angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, tests, heap probe
 angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree
 angband-pico/tools/screen-sweep.sh       # the suite, part 4: every screen rendered at 80 and 64
-angband-pico/tools/port-warnings.sh      # the suite, part 5: the port's own sources at -Wall -Wextra
+angband-pico/tools/port-warnings.sh      # the suite, part 5: the port's own sources at -Wall -Wextra,
+                                         # over build-pico2 AND build-pico2-console (stage 090)
 angband-pico/tools/host-build.sh --borg  # harness stage 055: the PC-side borg, host only
 angband-pico/tools/borg-run.sh birth     # and the savefile a lockstep run loads on both sides
 cmake --build angband-pico/build-pico2 --target angband_core
@@ -593,3 +594,15 @@ cmake --build angband-pico/build-pico2 --target angband_fsdiag
 cmake --build angband-pico/build-pico2 --target angband_termdiag
 cmake --build angband-pico/build-pico2 --target angband        # the game
 ```
+
+**`ANGBAND_CONSOLE` (stage 090), OFF in the shipped build.** It gates every developer
+helper in `src/main.c`: `stdio_init_all()`, the 10 s USB wait, the six boot lines, the
+`PICO[...]` reports and their `EVENT_NEW_LEVEL_DISPLAY` handler, the `init ... heap ... stack`
+note on row 0, the `rng seed` line and `hook_plog()`'s `printf`. On the `angband` target it
+also sets `pico_enable_stdio_usb`/`_uart` to its value, so the shipped build links no TinyUSB
+device stack and no UART driver. The panel half of `halt_with()` is not gated. CMake refuses
+`ANGBAND_SERIAL_KEYS`, `ANGBAND_SERIAL_SCREEN`, `ANGBAND_SYNC`, `ANGBAND_TURN_LOG` and
+`ANGBAND_SAVE_RESTORE` without it, and `main-pico.c` and `turnlog.c` carry an `#error` as a
+second lock. With it ON the game's `.text` and `.data` are byte-identical to the stage 080
+release. The shipped build cannot be reset by `picotool` over USB: flash it with BOOTSEL or
+the loader menu. No vendored file was edited for it.

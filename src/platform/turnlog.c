@@ -25,6 +25,12 @@
 
 #ifdef ANGBAND_TURN_LOG
 
+// Stage 090: the log is printed on the developer console, which only a console build has.
+// CMakeLists.txt refuses the combination; this is the second lock.
+#ifndef ANGBAND_CONSOLE
+#error "ANGBAND_TURN_LOG needs ANGBAND_CONSOLE: configure with -DANGBAND_CONSOLE=ON"
+#endif
+
 #include <stdio.h>
 
 #include "pico/stdlib.h"

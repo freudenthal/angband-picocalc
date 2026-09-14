@@ -137,6 +137,36 @@ option(ANGBAND_SYNC "Harness stage 055: one SYNC line per completed player comma
 # destroys that game on the next boot. Nothing in sdcard-pico2/ is built with it.
 option(ANGBAND_SAVE_RESTORE "Stage 065: copy PicoCalc.master over the savefile at boot" OFF)
 
+# ANGBAND_CONSOLE (stage 090) -- the developer console. OFF in the shipped build.
+#
+#   cmake -B build-pico2-console -S . ... -DANGBAND_CONSOLE=ON
+#
+# With it ON the game has USB CDC and UART0 stdio, waits up to 10 s for a USB terminal,
+# prints the boot lines on the panel and on serial, prints the PICO[...] memory reports,
+# writes the `init ... heap ... stack ...` note on row 0 of the splash, and echoes plog()
+# to serial. With it OFF none of that is built: no TinyUSB device stack, no UART driver, no
+# wait, and the panel shows nothing before the splash. The panel half of the two failure
+# paths (`SD card mount failed`, `*** Angband quit ***`) is NOT gated -- a player with no
+# serial lead must still be told why the game did not start.
+#
+# Every harness and bench option prints or reads on the console, so each one needs it; the
+# guard below refuses the combination rather than building a harness binary that is deaf.
+# The three diagnostics are not affected: they keep USB stdio unconditionally.
+#
+# THE SHIPPED BUILD CANNOT BE RESET BY picotool OVER USB. picotool's reset interface rides
+# on USB stdio, so a release build is flashed through BOOTSEL or the card's loader menu.
+option(ANGBAND_CONSOLE "Developer console: USB+UART stdio, boot lines, memory reports, the 10 s USB wait" OFF)
+
+foreach(needs_console ANGBAND_SERIAL_KEYS ANGBAND_SERIAL_SCREEN ANGBAND_SYNC ANGBAND_TURN_LOG
+                      ANGBAND_SAVE_RESTORE)
+    if(${needs_console} AND NOT ANGBAND_CONSOLE)
+        message(FATAL_ERROR
+            "${needs_console}=ON needs ANGBAND_CONSOLE=ON: every harness and bench option "
+            "prints or reads on the developer console, and the shipped build (ANGBAND_CONSOLE "
+            "OFF) has no stdio at all. Configure with -DANGBAND_CONSOLE=ON.")
+    endif()
+endforeach()
+
 # The SYNC line is only worth emitting to something that is driving the game, and the only
 # thing that can drive it over serial is the stage 030 key path. Without it the option would
 # print a line no one asked for on every command of a hand-played session -- and, worse, a
@@ -591,6 +621,9 @@ target_compile_definitions(angband PRIVATE
     # point of putting it there -- platform-cmp.sh and the PORT: hunk invariant have
     # nothing to check, because no game source was edited.
     $<$<BOOL:${ANGBAND_SAVE_RESTORE}>:ANGBAND_SAVE_RESTORE=1>
+    # Stage 090. This target only: src/main.c and src/platform/*.c read it; no src/game/
+    # source does, and angband_termdiag compiles main-pico.c without it.
+    $<$<BOOL:${ANGBAND_CONSOLE}>:ANGBAND_CONSOLE=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
@@ -672,13 +705,14 @@ target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
 # constant, so z-rand.c's Rand_init() would roll the same dungeon on every boot.
 target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand)
 
-# specifications.md 6.5. The game is not a diagnostic, but every boot line, the
-# init_angband() timing and the per-level heap figures go to serial, and a quit() message
-# goes to both.
+# specifications.md 6.5. The game is not a diagnostic. In a console build every boot line,
+# the init_angband() timing and the per-level heap figures go to serial, and a quit()
+# message goes to both.
 # PORT: picocalc-device-harness stage 020. The case USB-C is the Pico's UART0 console
-# through the CH340 and it survives every reset; USB stays on because picotool's reset
+# through the CH340 and it survives every reset; USB is on because picotool's reset
 # interface rides on it.
-pico_enable_stdio_usb(angband 1)
-pico_enable_stdio_uart(angband 1)
+# Stage 090: both transports only with ANGBAND_CONSOLE. The shipped build has neither.
+pico_enable_stdio_usb(angband ${ANGBAND_CONSOLE})
+pico_enable_stdio_uart(angband ${ANGBAND_CONSOLE})
 
 pico_add_extra_outputs(angband)

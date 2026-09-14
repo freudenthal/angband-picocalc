@@ -23,6 +23,11 @@
 //                          whole heap -- in PSRAM. Must precede the first mem_alloc.
 //   4. sd_fs_mount()       before init_file_paths(); the game reads 1.3 MB off the card
 //                          during init_angband().
+//
+// Stage 090: ANGBAND_CONSOLE. Everything this file says on serial, the boot lines on the
+// panel, the 10 s USB wait, the PICO[...] memory reports and the note on the splash row are
+// developer helpers and are built only with it. The shipped build keeps the panel half of
+// halt_with(), so a mount failure or a quit() is still explained on the glass.
 
 #include <stdarg.h>
 #include <stdbool.h>
@@ -31,7 +36,9 @@
 #include <string.h>
 
 #include "pico/rand.h"
+#ifdef ANGBAND_CONSOLE
 #include "pico/stdio_usb.h"
+#endif
 #include "pico/stdlib.h"
 
 #include "platform/lcd.h"
@@ -77,10 +84,10 @@ static void boot_panel_line(const char *text, uint8_t row)
         lcd_putc(col, row, (uint8_t)(*text ? *text++ : ' '));
 }
 
-// Serial always; the panel too, but only while the boot rows still belong to us. Once the
-// term is live the panel half is dropped -- lcd_putc writes straight at the glass, behind
-// ui-term.c's back, and a stray line during play would survive until something repainted
-// that row.
+// Serial in a console build; the panel too, but only while the boot rows still belong to
+// us. Once the term is live the panel half is dropped -- lcd_putc writes straight at the
+// glass, behind ui-term.c's back, and a stray line during play would survive until
+// something repainted that row.
 static bool panel_is_the_terms = false;
 
 static void boot_say(const char *fmt, ...)
@@ -92,11 +99,21 @@ static void boot_say(const char *fmt, ...)
     vsnprintf(line, sizeof(line), fmt, args);
     va_end(args);
 
+#ifdef ANGBAND_CONSOLE
     printf("%s\n", line);
+#endif
 
     if (!panel_is_the_terms && boot_row < PICO_TERM_ROWS)
         boot_panel_line(line, boot_row++);
 }
+
+// The boot narration: a line on serial and the panel in a console build, nothing at all in
+// the shipped one. boot_say() itself is for what the player must see either way.
+#ifdef ANGBAND_CONSOLE
+#define console_say(...) boot_say(__VA_ARGS__)
+#else
+#define console_say(...) ((void)0)
+#endif
 
 // The panic path, shared by the mount failure and by z-util.c's quit(). Spreads a message
 // over as many panel rows as it needs, flushes serial, and stops. There is nothing to
@@ -110,7 +127,9 @@ static void halt_with(const char *what, const char *detail)
     // One blank line to separate the box from whatever was on the wire, and nothing
     // more: boot_say() below does its own printf. The first device run had a printf of
     // the banner here as well, and the serial log carried "*** Angband quit ***" twice.
+#ifdef ANGBAND_CONSOLE
     printf("\n");
+#endif
     boot_panel_line("", 0);
     boot_say("*** %s ***", what);
 
@@ -127,15 +146,19 @@ static void halt_with(const char *what, const char *detail)
                 n = PICO_TERM_COLS;
             memcpy(chunk, detail + off, n);
             chunk[n] = '\0';
+#ifdef ANGBAND_CONSOLE
             if (off == 0)
                 printf("%s\n", detail);
+#endif
             boot_panel_line(chunk, boot_row++);
         }
     }
 
     boot_panel_line("halted -- power cycle the PicoCalc", PICO_TERM_ROWS - 1);
+#ifdef ANGBAND_CONSOLE
     printf("halted -- power cycle the PicoCalc\n");
     stdio_flush();
+#endif
 
     while (true)
     {
@@ -155,11 +178,14 @@ static void hook_plog(const char *str)
     if (!str)
         return;
 
+#ifdef ANGBAND_CONSOLE
     printf("plog: %s\n", str);
+#endif
 
     // Never on the panel once ui-term.c owns it: the next Term_fresh() only repaints the
     // cells it thinks changed, so a line written behind its back can outlive the warning
-    // it reports. Serial is the record.
+    // it reports. Serial is the record in a console build. In both builds a plog() before
+    // the term owns the panel is a warning the player should see, so this is boot_say().
     if (!panel_is_the_terms)
         boot_say("%s", str);
 }
@@ -206,6 +232,10 @@ static void stack_paint(void)
     while (lo < hi)
         *lo++ = STACK_PATTERN;
 }
+
+// The readers are only called from console code. The paint stays in every build: 64 KB of
+// stores, once, at boot.
+#ifdef ANGBAND_CONSOLE
 
 static size_t stack_size(void)
 {
@@ -265,6 +295,8 @@ static void pico_on_new_level(game_event_type type, game_event_data *data, void 
     report_memory(tag);
 }
 
+#endif /* ANGBAND_CONSOLE: the stack readers and the memory reports */
+
 // ---------------------------------------------------------------------------------------
 // The RNG seed.
 //
@@ -284,7 +316,7 @@ static void seed_rng(void)
     Rand_state_init(seed);
     Rand_quick = false;
 
-    boot_say("rng seed %08lx", (unsigned long)seed);
+    console_say("rng seed %08lx", (unsigned long)seed);
 }
 
 // ---------------------------------------------------------------------------------------
@@ -362,7 +394,7 @@ static void restore_master_savefile(void)
     // with the option on must still boot on one.
     if (!file_exists(SAVE_RESTORE_MASTER))
     {
-        boot_say("save-restore: no PicoCalc.master on the card, leaving the savefile alone");
+        console_say("save-restore: no PicoCalc.master on the card, leaving the savefile alone");
         return;
     }
 
@@ -371,7 +403,7 @@ static void restore_master_savefile(void)
     src = file_open(SAVE_RESTORE_MASTER, MODE_READ, FTYPE_RAW);
     if (!src)
     {
-        boot_say("save-restore: cannot open %s", SAVE_RESTORE_MASTER);
+        console_say("save-restore: cannot open %s", SAVE_RESTORE_MASTER);
         return;
     }
 
@@ -383,7 +415,7 @@ static void restore_master_savefile(void)
     if (!dst)
     {
         file_close(src);
-        boot_say("save-restore: cannot write %s", savefile);
+        console_say("save-restore: cannot write %s", savefile);
         return;
     }
 
@@ -409,7 +441,7 @@ static void restore_master_savefile(void)
 
     t1 = time_us_64();
 
-    boot_say("save-restore: %s %u B in %lu ms (boot only, outside every measured bracket)",
+    console_say("save-restore: %s %u B in %lu ms (boot only, outside every measured bracket)",
              ok ? "copied" : "FAILED after", (unsigned)total,
              (unsigned long)((t1 - t0) / 1000u));
 }
@@ -420,7 +452,9 @@ static void restore_master_savefile(void)
 
 int main(void)
 {
+#ifdef ANGBAND_CONSOLE
     uint64_t t0, t1;
+#endif
 
     stack_paint();
 
@@ -429,7 +463,9 @@ int main(void)
     syscalls_init();
     (void)psram_heap_in_psram();
 
+#ifdef ANGBAND_CONSOLE
     stdio_init_all();
+#endif
 
     // The front end first, so there is a panel to print a mount failure on. init_pico()
     // brings up the LCD, the keyboard, the UTF-8 hooks and the one 64x32 term, and leaves
@@ -441,12 +477,14 @@ int main(void)
     plog_aux = hook_plog;
     quit_aux = hook_quit;
 
+#ifdef ANGBAND_CONSOLE
     boot_say("Angband %s on the PicoCalc", buildver);
 
     // specifications.md 6.5, and the rule the user restated for this stage: the board is
     // powered up before the USB lead goes in, so nothing may be printed for the first ten
     // seconds unless a terminal is already listening. Never blocks -- the game must still
-    // run headless.
+    // run headless. Console builds only (stage 090): the shipped build has no USB stdio
+    // and starts the mount straight away.
     boot_say("waiting up to 10 s for a USB terminal...");
     for (unsigned i = 0; i < 100 && !stdio_usb_connected(); i++)
         sleep_ms(100);
@@ -455,17 +493,18 @@ int main(void)
     boot_say("Angband %s on the PicoCalc -- stage 050 bring-up", buildver);
     boot_say("stack %u B at %p..%p", (unsigned)stack_size(),
              (void *)&__StackBottom, (void *)&__StackTop);
+#endif
 
     if (!sd_fs_mount())
         halt_with("SD card mount failed", sd_fs_last_error());
 
-    boot_say("card mounted, SPI %lu Hz (asked %lu)",
-             (unsigned long)sd_fs_effective_hz(), (unsigned long)sd_fs_requested_hz());
+    console_say("card mounted, SPI %lu Hz (asked %lu)",
+                (unsigned long)sd_fs_effective_hz(), (unsigned long)sd_fs_requested_hz());
 
     ANGBAND_SYS = "pico";
 
     init_files();
-    boot_say("savefile %s", savefile);
+    console_say("savefile %s", savefile);
 
     // Stage 065 item 1. After init_files(), because it needs `savefile` set and
     // create_needed_dirs() to have made user/save/; before play_game(GAME_LOAD), which is
@@ -479,6 +518,7 @@ int main(void)
     cmd_get_hook = textui_get_cmd;
 
     init_display();
+#ifdef ANGBAND_CONSOLE
     event_add_handler(EVENT_NEW_LEVEL_DISPLAY, pico_on_new_level, NULL);
 
     // 1.3 MB of gamedata through file_getl at ~460 KB/s (specifications.md 6.3) plus the
@@ -487,21 +527,27 @@ int main(void)
     // serial log needs a marker either side to get the total.
     boot_say("loading gamedata, this takes a few seconds...");
     stdio_flush();
+#endif
     panel_is_the_terms = true;
 
+#ifdef ANGBAND_CONSOLE
     t0 = time_us_64();
     init_angband();
     t1 = time_us_64();
 
     printf("PICO[init] init_angband() took %lu ms\n", (unsigned long)((t1 - t0) / 1000u));
     report_memory("init");
+#else
+    init_angband();
+#endif
 
     textui_init();
 
+#ifdef ANGBAND_CONSOLE
     // The same three numbers on the panel, on the row pause_line() is about to sit under.
     // Serial is the record, but the board is often run with no lead in it and these are
     // the figures specifications.md 7.1 and 12 want off the first boot. prt() rather than
-    // lcd_putc(): the term owns the glass from here on.
+    // lcd_putc(): the term owns the glass from here on. Console builds only (stage 090).
     {
         char note[PICO_TERM_COLS + 1];
 
@@ -511,6 +557,7 @@ int main(void)
                 (unsigned)stack_high_water());
         prt(note, 0, 0);
     }
+#endif
 
     // main-nds.c pauses here too. It is the last chance to read the splash screen, and on
     // this board it also proves a key reaches the game before anything depends on one.
@@ -522,7 +569,9 @@ int main(void)
     // ui-game.c:700-740; no file_exists test is needed here.
     play_game(GAME_LOAD);
 
+#ifdef ANGBAND_CONSOLE
     report_memory("exit");
+#endif
 
     textui_cleanup();
     cleanup_angband();

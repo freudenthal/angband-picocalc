@@ -6,6 +6,12 @@
 //
 // STACK NOTE (stage 020): the core-0 stack is the 2 KB the SDK puts in SCRATCH_Y. The span
 // buffer below is 6,400 bytes and is therefore static, not automatic.
+//
+// Stage 090: nothing in this file prints without a harness option, and every harness option
+// implies ANGBAND_CONSOLE (CMakeLists.txt refuses it otherwise). This is the second lock.
+#if (defined(ANGBAND_SERIAL_KEYS) || defined(ANGBAND_SERIAL_SCREEN)) && !defined(ANGBAND_CONSOLE)
+#error "ANGBAND_SERIAL_KEYS and ANGBAND_SERIAL_SCREEN need ANGBAND_CONSOLE: configure with -DANGBAND_CONSOLE=ON"
+#endif
 
 #include <stdio.h>
 #include <string.h>

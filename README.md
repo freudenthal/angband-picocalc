@@ -20,6 +20,20 @@ cmake --build angband-pico/build-pico2 --target angband
 it for the first time, use the command in `../.llm/projects/angband-picocalc/specifications.md`
 §10. It needs pico-sdk 2.3.0 and picotool 2.3.0.
 
+`ANGBAND_CONSOLE` is the developer console. It is off in the release build. When it is on,
+the game has USB and UART serial, waits up to 10 seconds for a USB terminal, and shows the
+boot lines, the memory reports and the `init ... heap ... stack` note. The harness and bench
+options (`ANGBAND_SERIAL_KEYS`, `ANGBAND_SERIAL_SCREEN`, `ANGBAND_SYNC`, `ANGBAND_TURN_LOG`,
+`ANGBAND_SAVE_RESTORE`) need it, and CMake stops if it is off. A console build goes in its
+own tree:
+
+```bash
+cmake -G Ninja -B angband-pico/build-pico2-console -S angband-pico <the usual flags> -DANGBAND_CONSOLE=ON
+cmake --build angband-pico/build-pico2-console --target angband
+```
+
+`port-warnings.sh` needs both `build-pico2` and `build-pico2-console` configured.
+
 The suite has five parts. Run all of them before a release:
 
 ```bash
@@ -79,8 +93,12 @@ At the next power-on the game starts without the menu.
   (`SIDEBAR_TOP`), so the map uses all 64 columns.
 * **No crash save.** If the board stops, you lose the game since the last save.
 
-The console is on the case USB-C socket at 115200 baud (CH340). The game waits up to
-10 seconds for a USB terminal on the board socket before it starts.
+The release build has no serial console and does not wait for a USB terminal. The panel
+stays black for approximately 1 second, then the splash screen shows. If the card does not
+mount, or the game cannot start, the panel shows a box with the reason.
+
+A console build (§1) has its console on the case USB-C socket at 115200 baud (CH340), and
+waits up to 10 seconds for a USB terminal on the board socket before it starts.
 
 ## 4. Licence
 

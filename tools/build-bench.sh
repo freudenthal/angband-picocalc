@@ -6,7 +6,7 @@
 #
 # Every configure passes -S (a bare `cmake -B dir -D...` does not reach the cache; cross-
 # stage note 070). The recipe is the bench recipe and borg-bench.py refuses anything else:
-# keys ON, SYNC ON, turn log ON, save-restore ON, mirror OFF.
+# console ON (stage 090), keys ON, SYNC ON, turn log ON, save-restore ON, mirror OFF.
 set -e
 
 cd /c/Users/greenblob/Documents/PicoCalc
@@ -29,7 +29,7 @@ for pad in 0 2048 4096 6144; do
         -DPICO_BOARD=pimoroni_pico_plus2_w_rp2350 -DPICO_PLATFORM=rp2350 \
         -Dpicotool_DIR="$PTOOL" \
         -DCMAKE_EXE_LINKER_FLAGS="-Wl,--print-memory-usage" \
-        -DANGBAND_SERIAL_KEYS=ON -DANGBAND_SYNC=ON -DANGBAND_TURN_LOG=ON \
+        -DANGBAND_CONSOLE=ON -DANGBAND_SERIAL_KEYS=ON -DANGBAND_SYNC=ON -DANGBAND_TURN_LOG=ON \
         -DANGBAND_SAVE_RESTORE=ON -DANGBAND_TEXT_PAD="$pad" > "/tmp/cfg-$dir.log" 2>&1 \
         || { tail -30 "/tmp/cfg-$dir.log"; exit 1; }
 

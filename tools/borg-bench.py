@@ -78,6 +78,7 @@ GIT_BASH = r"C:\Program Files\Git\bin\bash.exe"
 # a dishonest elapsed time with nothing in the capture saying which records were dumped
 # over. This check is the second lock on that door, at the point of measurement.
 RECIPE = [
+    ("ANGBAND_CONSOLE", "ON"),  # stage 090: every harness option needs the console
     ("ANGBAND_SERIAL_KEYS", "ON"),
     ("ANGBAND_SYNC", "ON"),
     ("ANGBAND_TURN_LOG", "ON"),
