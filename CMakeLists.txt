@@ -608,10 +608,32 @@ pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_SOURCE_DIR}/src/lin
 # substitutes. It lives in the build tree, so the two paths are given in order and the SDK
 # searches both. See src/link/default_text_excludes.incl.in for what it does and why only
 # one override is needed rather than the two the stage plan's table lists.
+#
+# STAGE 070 ITEM 3: THE HOT CORE OBJECTS LIVE IN SRAM. Every name in ANGBAND_SRAM_OBJECTS is
+# excluded from flash .text AND flash .rodata by the two generated overrides, and the SDK's
+# section_default_data.incl then gathers both into .data, which is `> RAM AT> RAM_STORE`.
+# Why: a loop running from flash while reading the PSRAM heap pays 6,297-7,949 ns an access
+# on the shared QMI (specifications.md 6.4), and the seven per-step sweeps of the level are
+# exactly that loop. Code in SRAM also has no placement sensitivity, which is what makes the
+# rest of stage 070 measurable. Each pattern carries the directory separator so that
+# `cave.c` does not also match `gen-cave.c` or `cmd-cave.c`. CHECK WITH nm, NOT BY READING
+# THIS LIST: a placement that silently fails looks exactly like one that worked (stage 045).
+set(ANGBAND_SRAM_OBJECTS
+    cave-view cave-square cave cave-map game-world z-bitflag z-queue z-type z-virt
+    mon-move mon-util mon-predicate ui-map
+    z-util z-rand z-form z-textblock player-calcs player-util player-timed
+    ui-display ui-term ui-output ui-event ui-input ui-keymap ui-game game-event game-input
+    cmd-core obj-gear obj-util obj-knowledge trap mon-list obj-list ui-obj-list ui-mon-list)
+set(ANGBAND_SRAM_PATTERNS "")
+foreach(obj IN LISTS ANGBAND_SRAM_OBJECTS)
+    string(APPEND ANGBAND_SRAM_PATTERNS " */src/game/${obj}.c.obj")
+endforeach()
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/link/default_text_excludes.incl.in
                ${CMAKE_CURRENT_BINARY_DIR}/link-gen/default_text_excludes.incl @ONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/link/default_rodata_excludes.incl.in
+               ${CMAKE_CURRENT_BINARY_DIR}/link-gen/default_rodata_excludes.incl @ONLY)
 pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_BINARY_DIR}/link-gen
-    FILES default_text_excludes.incl)
+    FILES default_text_excludes.incl default_rodata_excludes.incl)
 target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
 
 # pico_rand for the RNG seed: specifications.md 6.3 says time() here is boot time plus a

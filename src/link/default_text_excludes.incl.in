@@ -19,11 +19,11 @@
    1,024 sets. The set index is therefore address bits [12:3] and the mapping repeats every
    8 KB. Four points across one period are 0, 2 KB, 4 KB and 6 KB.
 
-   The same file is where item 3 adds the hot objects to the EXCLUDE_FILE list. Note that
-   only ONE override is needed for that, not the two the stage plan's deliverable table
-   lists: the SDK's section_default_data.incl already gathers `*(.text*)` and `*(.rodata*)`
-   into the .data output section, which is `> RAM AT> RAM_STORE`. Anything excluded here
-   lands in SRAM by that existing catch-all. */
+   ITEM 3: the substituted object patterns are the hot core objects (ANGBAND_SRAM_OBJECTS in
+   CMakeLists.txt). No section_default_data.incl override is needed: the SDK's already
+   gathers `*(.text*)` and `*(.rodata*)` into the .data output section, which is
+   `> RAM AT> RAM_STORE`, so anything excluded here lands in SRAM by that catch-all. The
+   same list is excluded from flash .rodata by default_rodata_excludes.incl.in. */
 
 . = . + @ANGBAND_TEXT_PAD@;
-*(EXCLUDE_FILE(*libgcc.a: *libc.a: *lib*_a-mem*.o *libm.a:) .text*)
+*(EXCLUDE_FILE(*libgcc.a: *libc.a: *lib*_a-mem*.o *libm.a:@ANGBAND_SRAM_PATTERNS@) .text*)

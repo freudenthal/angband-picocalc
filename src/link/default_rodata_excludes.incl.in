@@ -1,0 +1,11 @@
+/* PORT: angband-picocalc stage 070 item 3. Overrides pico-sdk 2.3.0's one-line
+   pico_standard_link/script_include/default_rodata_excludes.incl. CMake substitutes the
+   object patterns from ANGBAND_SRAM_OBJECTS in CMakeLists.txt. NEVER NAME THE SUBSTITUTION
+   INSIDE THIS COMMENT: every pattern starts with a star and a slash, which ends it.
+
+   The hot core objects' read-only data (cave.c's ddgrid/ddx/ddy tables, which the noise
+   flood reads eight times a grid) must leave flash with their code, or the loop is still
+   alternating chip selects -- only now between SRAM code, flash tables and the PSRAM heap.
+   Excluded .rodata lands in SRAM by section_default_data.incl's `*(.rodata*)` catch-all. */
+
+*(EXCLUDE_FILE(*libgcc.a: *libc.a: *lib*_a-mem*.o *libm.a:@ANGBAND_SRAM_PATTERNS@) .rodata*)
