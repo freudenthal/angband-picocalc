@@ -473,6 +473,9 @@ static void pico_battery_changed(void)
     int cx, cy;
     bool cu;
 
+    // The raw byte on serial in a console build, so a session can set it beside the field.
+    console_say("battery: register 0x%02x", (unsigned)battery_raw);
+
     if (!character_generated || !player || !player->upkeep)
         return;
 
