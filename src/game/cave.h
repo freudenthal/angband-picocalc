@@ -160,7 +160,15 @@ struct grid_data {
 
 struct square {
 	uint8_t feat;
-	bitflag *info;
+	/*
+	 * PORT: angband-picocalc stage 070 item 4, 2026-09-13. Upstream is `bitflag *info`,
+	 * a separate SQUARE_SIZE mem_zalloc per grid: 26,136 scattered heap blocks for two
+	 * chunks, and one more dependent random PSRAM load in every flag test. The array holds
+	 * the same bytes beside feat; load.c and save.c index it, so the save format is
+	 * unchanged. square() loses its const below because an array member of a const struct
+	 * decays to const bitflag *.
+	 */
+	bitflag info[SQUARE_SIZE];
 	int light;
 	int16_t mon;
 	struct object *obj;
@@ -363,7 +371,7 @@ bool square_suits_stairs_ok(struct chunk *c, struct loc grid);
 bool square_allows_summon(struct chunk *c, struct loc grid);
 
 
-const struct square *square(struct chunk *c, struct loc grid);
+struct square *square(struct chunk *c, struct loc grid);	/* PORT: stage 070 item 4, not const */
 struct feature *square_feat(struct chunk *c, struct loc grid);
 int square_light(struct chunk *c, struct loc grid);
 struct monster *square_monster(struct chunk *c, struct loc grid);

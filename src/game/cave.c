@@ -342,7 +342,7 @@ const char *get_feat_code_name(int idx)
  * Allocate a new chunk of the world
  */
 struct chunk *cave_new(int height, int width) {
-	int y, x;
+	int y;	/* PORT: stage 070 item 4 -- x went with the per-grid info loop */
 
 	struct chunk *c = mem_zalloc(sizeof *c);
 	c->height = height;
@@ -354,9 +354,8 @@ struct chunk *cave_new(int height, int width) {
 	c->scent.grids = mem_zalloc(c->height * sizeof(uint16_t*));
 	for (y = 0; y < c->height; y++) {
 		c->squares[y] = mem_zalloc(c->width * sizeof(struct square));
-		for (x = 0; x < c->width; x++) {
-			c->squares[y][x].info = mem_zalloc(SQUARE_SIZE * sizeof(bitflag));
-		}
+		/* PORT: stage 070 item 4 -- info is an array in struct square (cave.h) and the
+		 * zeroed row block already holds it; upstream allocated it here per grid. */
 		c->noise.grids[y] = mem_zalloc(c->width * sizeof(uint16_t));
 		c->scent.grids[y] = mem_zalloc(c->width * sizeof(uint16_t));
 	}
@@ -407,7 +406,7 @@ void cave_free(struct chunk *c) {
 
 	for (y = 0; y < c->height; y++) {
 		for (x = 0; x < c->width; x++) {
-			mem_free(c->squares[y][x].info);
+			/* PORT: stage 070 item 4 -- no per-grid info block to free (cave.h). */
 			if (c->squares[y][x].trap)
 				square_free_trap(c, loc(x, y));
 			if (c->squares[y][x].obj)

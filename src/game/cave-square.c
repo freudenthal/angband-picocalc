@@ -960,7 +960,7 @@ bool square_allows_summon(struct chunk *c, struct loc grid)
  * Below are various square-specific functions which are not predicates
  */
 
-const struct square *square(struct chunk *c, struct loc grid)
+struct square *square(struct chunk *c, struct loc grid)	/* PORT: stage 070 item 4, not const */
 {
 	assert(square_in_bounds(c, grid));
 	return &c->squares[grid.y][grid.x];
