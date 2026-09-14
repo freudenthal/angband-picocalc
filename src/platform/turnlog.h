@@ -68,21 +68,53 @@ enum {
 	TURNLOG_MONSTERS,	/* mon-move.c process_monsters + reset_monsters */
 	TURNLOG_WORLD,		/* game-world.c process_world -- contains 4,5,6,7 */
 	TURNLOG_GEN,		/* cave-gen.c prepare_next_level */
+	/*
+	 * Stage 075 item 1: the unbracketed turn. Every phase below is SELF TIME -- the
+	 * window less every other bracketed window (any phase, or idle) that opened and
+	 * closed inside it -- because handle_stuff() and friends are reached from inside
+	 * process_player(), process_world() and process_monsters(), and an inclusive figure
+	 * would count the same microseconds twice. The phases above keep their stage 070
+	 * inclusive meaning, so old and new captures compare row for row.
+	 */
+	TURNLOG_CLEANUP,	/* game-world.c process_player_cleanup */
+	TURNLOG_PLAYER,		/* game-world.c process_player, three sites */
+	TURNLOG_NOTICE,		/* player-calcs.c notice_stuff */
+	TURNLOG_BONUS,		/* player-calcs.c update_stuff to the character_generated test */
+	TURNLOG_UPDMON,		/* player-calcs.c update_stuff, both update_monsters calls */
+	TURNLOG_PANEL,		/* player-calcs.c update_stuff, the PU_PANEL signal */
+	TURNLOG_MAP,		/* ui-display.c update_maps, the prt_map() branch */
+	TURNLOG_REDRAW,		/* player-calcs.c redraw_stuff, less map and all else inside */
+	TURNLOG_REFRESH,	/* game-world.c run_game_loop, EVENT_REFRESH */
+	TURNLOG_ANIMATE,	/* game-world.c run_game_loop, EVENT_ANIMATE */
+	TURNLOG_KBPOLL,		/* main-pico.c check_events(false), the non-waiting poll */
 	TURNLOG_PHASE_MAX
 };
 
 #ifdef ANGBAND_TURN_LOG
 
-uint64_t turnlog_us(void);
-void turnlog_acc(int phase, uint64_t t0);
-void turnlog_idle(uint64_t t0);
+/*
+ * A mark is the start time and the claimed total at the start. `claimed` is the union of
+ * every closed bracket window in the turn; turnlog_end() prints the turn less it as `rst`,
+ * which is exact however the brackets nest. See turnlog.c.
+ */
+typedef struct {
+	uint64_t t0;
+	uint64_t claimed;
+} turnlog_mark_t;
+
+turnlog_mark_t turnlog_mark(void);
+void turnlog_acc(int phase, turnlog_mark_t m);
+void turnlog_self(int phase, turnlog_mark_t m);
+void turnlog_idle(turnlog_mark_t m);
 void turnlog_begin(void);
 void turnlog_end(int depth, int32_t game_turn);
 
 /** Take a start stamp into a fresh local. Declares the variable. */
-#define TURNLOG_MARK(v)			uint64_t v = turnlog_us()
+#define TURNLOG_MARK(v)			turnlog_mark_t v = turnlog_mark()
 /** Add (now - v) to a phase. Calling it twice for one phase accumulates. */
 #define TURNLOG_ACC(p, v)		turnlog_acc((p), (v))
+/** Add (now - v) less every bracket closed inside it to a phase. Stage 075. */
+#define TURNLOG_SELF(p, v)		turnlog_self((p), (v))
 /** Add (now - v) to the turn's idle total, which turnlog_end() subtracts. */
 #define TURNLOG_IDLE(v)			turnlog_idle((v))
 /** Start a turn record. Called before run_game_loop(). */
@@ -94,6 +126,7 @@ void turnlog_end(int depth, int32_t game_turn);
 
 #define TURNLOG_MARK(v)			((void)0)
 #define TURNLOG_ACC(p, v)		((void)0)
+#define TURNLOG_SELF(p, v)		((void)0)
 #define TURNLOG_IDLE(v)			((void)0)
 #define TURNLOG_BEGIN()			((void)0)
 #define TURNLOG_END(d, t)		((void)0)

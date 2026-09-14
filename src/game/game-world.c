@@ -1025,12 +1025,16 @@ static void on_leave_level(void) {
 void run_game_loop(void)
 {
 	/* Tidy up after the player's command */
+	TURNLOG_MARK(tl_cln);			/* PORT: stage 075 */
 	process_player_cleanup();
+	TURNLOG_SELF(TURNLOG_CLEANUP, tl_cln);	/* PORT: stage 075 */
 
 	/* Keep processing the player until they use some energy or
 	 * another command is needed */
 	while (player->upkeep->playing) {
+		TURNLOG_MARK(tl_ply0);			/* PORT: stage 075 */
 		process_player();
+		TURNLOG_SELF(TURNLOG_PLAYER, tl_ply0);	/* PORT: stage 075 */
 		if (player->upkeep->energy_use)
 			break;
 		else
@@ -1041,7 +1045,9 @@ void run_game_loop(void)
 	 * player turn before processing the rest of the world */
 	while (player->energy >= z_info->move_energy) {
 		/* Do any necessary animations */
+		TURNLOG_MARK(tl_anm0);			/* PORT: stage 075 */
 		event_signal(EVENT_ANIMATE);
+		TURNLOG_SELF(TURNLOG_ANIMATE, tl_anm0);	/* PORT: stage 075 */
 		
 		/* Process monster with even more energy first */
 		TURNLOG_MARK(tl_mon1);			/* PORT: stage 070 */
@@ -1053,7 +1059,9 @@ void run_game_loop(void)
 
 		/* Process the player until they use some energy */
 		while (player->upkeep->playing) {
+			TURNLOG_MARK(tl_ply1);			/* PORT: stage 075 */
 			process_player();
+			TURNLOG_SELF(TURNLOG_PLAYER, tl_ply1);	/* PORT: stage 075 */
 			if (player->upkeep->energy_use)
 				break;
 			else
@@ -1066,7 +1074,9 @@ void run_game_loop(void)
 	while (true) {
 		notice_stuff(player);
 		handle_stuff(player);
+		TURNLOG_MARK(tl_evr0);			/* PORT: stage 075 */
 		event_signal(EVENT_REFRESH);
+		TURNLOG_SELF(TURNLOG_REFRESH, tl_evr0);	/* PORT: stage 075 */
 
 		/* Process the rest of the world, give the player energy and 
 		 * increment the turn counter unless we need to stop playing or
@@ -1085,7 +1095,9 @@ void run_game_loop(void)
 			/* Refresh */
 			notice_stuff(player);
 			handle_stuff(player);
+			TURNLOG_MARK(tl_evr1);			/* PORT: stage 075 */
 			event_signal(EVENT_REFRESH);
+			TURNLOG_SELF(TURNLOG_REFRESH, tl_evr1);	/* PORT: stage 075 */
 			if (player->is_dead || !player->upkeep->playing)
 				return;
 
@@ -1098,7 +1110,9 @@ void run_game_loop(void)
 				/* Refresh */
 				notice_stuff(player);
 				handle_stuff(player);
+				TURNLOG_MARK(tl_evr2);			/* PORT: stage 075 */
 				event_signal(EVENT_REFRESH);
+				TURNLOG_SELF(TURNLOG_REFRESH, tl_evr2);	/* PORT: stage 075 */
 				if (player->is_dead || !player->upkeep->playing)
 					return;
 			}
@@ -1140,7 +1154,9 @@ void run_game_loop(void)
 		 * any monsters with more energy take their turns */
 		while (player->energy >= z_info->move_energy) {
 			/* Do any necessary animations */
+			TURNLOG_MARK(tl_anm1);			/* PORT: stage 075 */
 			event_signal(EVENT_ANIMATE);
+			TURNLOG_SELF(TURNLOG_ANIMATE, tl_anm1);	/* PORT: stage 075 */
 
 			/* Process monster with even more energy first */
 			TURNLOG_MARK(tl_mon1);			/* PORT: stage 070 */
@@ -1152,7 +1168,9 @@ void run_game_loop(void)
 
 			/* Process the player until they use some energy */
 			while (player->upkeep->playing) {
+				TURNLOG_MARK(tl_ply2);			/* PORT: stage 075 */
 				process_player();
+				TURNLOG_SELF(TURNLOG_PLAYER, tl_ply2);	/* PORT: stage 075 */
 				if (player->upkeep->energy_use)
 					break;
 				else

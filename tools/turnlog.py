@@ -44,6 +44,13 @@
 # sample count and the full range beside the median, and a reader cannot make that mistake
 # again. A zero is not a measurement of a phase that did not run.
 #
+# THE COLUMNS COME FROM THE CAPTURE (stage 075). turnlog.c prints a `TLH` header naming every
+# column, and this tool reads it rather than trusting a list typed here, so a stage 065 or
+# 070 capture and a stage 075 one both parse. A capture with no header falls back to FIELDS,
+# the stage 070 list. Stage 075's columns are SELF time (the window less every other bracket
+# closed inside it) and `rst` is the device's own figure for the turn less the union of every
+# bracket window -- exact however the brackets nest, which the sum below is not.
+#
 # encoding='utf-8' everywhere: python on this machine defaults to cp1252 for file I/O and
 # has silently corrupted a file in this project before (stage 020 correction).
 
@@ -53,7 +60,7 @@ import json
 import os
 import sys
 
-# Must match the TLH header printed by src/platform/turnlog.c.
+# The stage 070 header, used when a capture has no TLH line. A capture's own TLH wins.
 FIELDS = ["n", "turn", "d", "tot", "was", "lit", "upd", "fgn", "mkn", "scn", "trp",
           "mon", "wld", "gen", "frm", "idle", "brk"]
 
@@ -66,6 +73,16 @@ CONTAINERS = ["mon", "wld"]
 
 # Reported over their non-zero records only. See the header.
 SPARSE = ["gen", "frm"]
+
+# Stage 075 item 1: the unbracketed turn, bracketed. SELF time, so disjoint from each other
+# and from the sweeps. NOT sweeps: nothing here is summed into SWEEPS. `rdr` is
+# redraw_stuff() less `map` (and less anything else bracketed inside it).
+NEW_LEAVES = ["cln", "ply", "ntc", "bon", "upm", "pan", "map", "rdr", "evr", "anm", "kbp"]
+
+# The stage plan's `rest`: tot less every phase it names. mon and wld are stage 070
+# containers and inclusive, so where a stage 075 bracket runs inside process_world() or
+# process_monsters() this counts it twice; `rst`, from the device, does not.
+REST_TERMS = ["was", "lit", "upd", "mon", "wld", "gen"] + NEW_LEAVES
 
 # Where a round's capture and table live, and where the placement sweep writes the error
 # bar. Stage 065 item 4. Relative to the workspace root, which is three levels up from
@@ -81,20 +98,36 @@ COMPARE_ROWS = ["tot"] + LEAVES + CONTAINERS
 def read_records(path):
     records = []
     malformed = 0
+    fields = FIELDS
     with io.open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
+            if line.startswith("TLH "):
+                fields = line.split()[1:]
+                continue
             if not line.startswith("TL "):
                 continue
             parts = line.split()[1:]
-            if len(parts) != len(FIELDS):
+            if len(parts) != len(fields):
                 malformed += 1
                 continue
             try:
-                records.append(dict(zip(FIELDS, [int(p) for p in parts])))
+                records.append(dict(zip(fields, [int(p) for p in parts])))
             except ValueError:
                 malformed += 1
     return records, malformed
+
+
+def has_new(rows):
+    return bool(rows) and all(k in rows[0] for k in NEW_LEAVES + ["rst"])
+
+
+def rest_sum(r):
+    return r["tot"] - sum(r[k] for k in REST_TERMS)
+
+
+def wld_less_sweeps(r):
+    return r["wld"] - (r["fgn"] + r["mkn"] + r["scn"] + r["trp"])
 
 
 def pct(values, p):
@@ -158,6 +191,23 @@ def report_depth(depth, rows):
 
     # The sparse columns. A median over every record is 0.00 for both of these and says
     # nothing; the count is part of the figure and is printed with it.
+    if has_new(rows):
+        print("  -- stage 075: the unbracketed turn, SELF time (disjoint) --")
+        for k in NEW_LEAVES:
+            line(k, k)
+        print("  -- stage 075: what is left --")
+        line("rst", "rst")
+        for name, fn in (("rest", rest_sum), ("wld-4", wld_less_sweeps),
+                         ("rdr+map", lambda r: r["rdr"] + r["map"])):
+            v = [fn(r) for r in rows]
+            med = pct(v, 50)
+            share = (100.0 * med / tot_med) if tot_med else 0.0
+            print("  %-7s%10.2f %10.2f %7.1f%%" % (name, ms(med), ms(pct(v, 95)), share))
+        print("  (rst: device, turn less the union of all brackets. rest: tot less the sum the")
+        print("   plan names, which double-counts a new bracket inside mon or wld. wld-4: wld")
+        print("   less its four sweeps. rdr is already redraw_stuff less map; rdr+map is the")
+        print("   container.)")
+
     print("  -- sparse: reported over NON-ZERO records only, count and range beside --")
     for k in SPARSE:
         v = [r[k] for r in rows if r[k] > 0]
@@ -209,9 +259,10 @@ def report(path, csv_out=None):
 
     if csv_out:
         with io.open(csv_out, "w", encoding="utf-8", newline="\n") as f:
-            f.write(",".join(FIELDS) + "\n")
+            cols = [k for k in records[0]]
+            f.write(",".join(cols) + "\n")
             for r in records:
-                f.write(",".join(str(r[k]) for k in FIELDS) + "\n")
+                f.write(",".join(str(r[k]) for k in cols) + "\n")
         print("")
         print("turnlog: wrote %s" % csv_out)
 
@@ -297,6 +348,11 @@ def compare_depth(depth, a_rows, b_rows, bar):
     row("SWEEPS",
         pct([sum(r[k] for k in LEAVES) for r in a_rows], 50),
         pct([sum(r[k] for k in LEAVES) for r in b_rows], 50))
+
+    # Stage 075's rows, only where BOTH captures have them. Never summed into SWEEPS.
+    if has_new(a_rows) and has_new(b_rows):
+        for key in NEW_LEAVES + ["rst"]:
+            row(key, pct([r[key] for r in a_rows], 50), pct([r[key] for r in b_rows], 50))
 
 
 def compare(a_arg, b_arg, bar_override):

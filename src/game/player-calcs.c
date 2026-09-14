@@ -38,6 +38,13 @@
 #include "player-spell.h"
 #include "player-timed.h"
 #include "player-util.h"
+/*
+ * PORT: angband-picocalc stage 075, 2026-09-13. Measurement only -- no logic is changed,
+ * and with ANGBAND_TURN_LOG unset every TURNLOG_* macro below is ((void)0). notice_stuff,
+ * update_stuff and redraw_stuff are bracketed here rather than at their callers because
+ * they are reached from dozens of sites. See src/platform/turnlog.h.
+ */
+#include "turnlog.h"
 
 /**
  * Stat Table (INT) -- Magic devices
@@ -2537,6 +2544,7 @@ void notice_stuff(struct player *p)
 {
 	/* Notice stuff */
 	if (!p->upkeep->notice) return;
+	TURNLOG_MARK(tl_ntc);	/* PORT: stage 075 */
 
 	/* Deal with ignore stuff */
 	if (p->upkeep->notice & PN_IGNORE) {
@@ -2557,6 +2565,7 @@ void notice_stuff(struct player *p)
 		/* Make sure this comes after all of the monster messages */
 		show_monster_messages();
 	}
+	TURNLOG_SELF(TURNLOG_NOTICE, tl_ntc);	/* PORT: stage 075 */
 }
 
 /**
@@ -2566,6 +2575,7 @@ void update_stuff(struct player *p)
 {
 	/* Update stuff */
 	if (!p->upkeep->update) return;
+	TURNLOG_MARK(tl_bon);	/* PORT: stage 075 */
 
 
 	if (p->upkeep->update & (PU_INVEN)) {
@@ -2600,6 +2610,8 @@ void update_stuff(struct player *p)
 		}
 	}
 
+	TURNLOG_SELF(TURNLOG_BONUS, tl_bon);	/* PORT: stage 075 */
+
 	/* Character is not ready yet, no map updates */
 	if (!character_generated) return;
 
@@ -2614,18 +2626,24 @@ void update_stuff(struct player *p)
 	if (p->upkeep->update & (PU_DISTANCE)) {
 		p->upkeep->update &= ~(PU_DISTANCE);
 		p->upkeep->update &= ~(PU_MONSTERS);
+		TURNLOG_MARK(tl_upm0);	/* PORT: stage 075 */
 		update_monsters(true);
+		TURNLOG_SELF(TURNLOG_UPDMON, tl_upm0);	/* PORT: stage 075 */
 	}
 
 	if (p->upkeep->update & (PU_MONSTERS)) {
 		p->upkeep->update &= ~(PU_MONSTERS);
+		TURNLOG_MARK(tl_upm1);	/* PORT: stage 075 */
 		update_monsters(false);
+		TURNLOG_SELF(TURNLOG_UPDMON, tl_upm1);	/* PORT: stage 075 */
 	}
 
 
 	if (p->upkeep->update & (PU_PANEL)) {
 		p->upkeep->update &= ~(PU_PANEL);
+		TURNLOG_MARK(tl_pan);	/* PORT: stage 075 */
 		event_signal(EVENT_PLAYERMOVED);
+		TURNLOG_SELF(TURNLOG_PANEL, tl_pan);	/* PORT: stage 075 */
 	}
 }
 
@@ -2685,6 +2703,7 @@ void redraw_stuff(struct player *p)
 
 	/* Character is not ready yet, no screen updates */
 	if (!character_generated) return;
+	TURNLOG_MARK(tl_rdr);	/* PORT: stage 075 */
 
 	/* Map is not shown, subwindow updates only */
 	if (!map_is_visible()) 
@@ -2692,8 +2711,10 @@ void redraw_stuff(struct player *p)
 
 	/* Hack - rarely update while resting or running, makes it over quicker */
 	if (((player_resting_count(p) % 100) || (p->upkeep->running % 100))
-		&& !(redraw & (PR_MESSAGE | PR_MAP)))
+		&& !(redraw & (PR_MESSAGE | PR_MAP))) {
+		TURNLOG_SELF(TURNLOG_REDRAW, tl_rdr);	/* PORT: stage 075 */
 		return;
+	}
 
 	/* For each listed flag, send the appropriate signal to the UI */
 	for (i = 0; i < N_ELEMENTS(redraw_events); i++) {
@@ -2712,13 +2733,17 @@ void redraw_stuff(struct player *p)
 	p->upkeep->redraw &= ~redraw;
 
 	/* Map is not shown, subwindow updates only */
-	if (!map_is_visible()) return;
+	if (!map_is_visible()) {
+		TURNLOG_SELF(TURNLOG_REDRAW, tl_rdr);	/* PORT: stage 075 */
+		return;
+	}
 
 	/*
 	 * Do any plotting, etc. delayed from earlier - this set of updates
 	 * is over.
 	 */
 	event_signal(EVENT_END);
+	TURNLOG_SELF(TURNLOG_REDRAW, tl_rdr);	/* PORT: stage 075 */
 }
 
 

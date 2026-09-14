@@ -689,6 +689,8 @@ static errr check_events(bool wait)
 
     if (wait)
         TURNLOG_IDLE(tl_idle);
+    else
+        TURNLOG_SELF(TURNLOG_KBPOLL, tl_idle);  // PORT: stage 075, the non-waiting poll
 
     return got ? 0 : 1;
 }

@@ -40,20 +40,48 @@ static uint64_t idle_us;
 static uint32_t record_n;
 static bool header_done;
 
-uint64_t turnlog_us(void)
+// Stage 075: the union of every closed bracket window this turn, idle included. A window
+// that closes sets it to (claimed at its open) + (its length), which absorbs everything
+// that closed inside it, so nested and sibling brackets are each counted once. A bracket
+// whose close is skipped (an early return) leaves its window unclaimed, so it shows in rst.
+static uint64_t claimed_us;
+
+turnlog_mark_t turnlog_mark(void)
 {
-	return time_us_64();
+	turnlog_mark_t m;
+
+	m.t0 = time_us_64();
+	m.claimed = claimed_us;
+	return m;
 }
 
-void turnlog_acc(int phase, uint64_t t0)
+// Stage 070 semantics: inclusive of anything bracketed inside it.
+void turnlog_acc(int phase, turnlog_mark_t m)
 {
+	uint64_t e = time_us_64() - m.t0;
+
 	if (phase >= 0 && phase < TURNLOG_PHASE_MAX)
-		phase_us[phase] += time_us_64() - t0;
+		phase_us[phase] += e;
+	claimed_us = m.claimed + e;
 }
 
-void turnlog_idle(uint64_t t0)
+// Stage 075 semantics: self time, less every window that closed inside this one.
+void turnlog_self(int phase, turnlog_mark_t m)
 {
-	idle_us += time_us_64() - t0;
+	uint64_t e = time_us_64() - m.t0;
+	uint64_t inner = claimed_us - m.claimed;
+
+	if (phase >= 0 && phase < TURNLOG_PHASE_MAX)
+		phase_us[phase] += (e > inner) ? e - inner : 0;
+	claimed_us = m.claimed + e;
+}
+
+void turnlog_idle(turnlog_mark_t m)
+{
+	uint64_t e = time_us_64() - m.t0;
+
+	idle_us += e;
+	claimed_us = m.claimed + e;
 }
 
 void turnlog_begin(void)
@@ -64,6 +92,7 @@ void turnlog_begin(void)
 		phase_us[i] = 0;
 
 	idle_us = 0;
+	claimed_us = 0;
 	turn_t0 = time_us_64();
 }
 
@@ -96,22 +125,29 @@ void turnlog_begin(void)
  *   idle  what was subtracted. A sanity figure: on a held key it is near zero.
  *   brk   psram_heap_used() / 1024. This is the endurance criterion -- heap after 1,000
  *         turns against heap after 100 on the same level -- and it costs nothing here.
+ *
+ * Stage 075 appends, all SELF time (see turnlog.h):
+ *   cln ply ntc bon upm pan map rdr evr anm kbp   the unbracketed turn, bracketed
+ *   rst   the turn less the union of every bracket window and idle: what no bracket
+ *         covers, exact however the brackets nest.
  */
 void turnlog_end(int depth, int32_t game_turn)
 {
 	uint64_t now = time_us_64();
-	uint64_t tot = now - turn_t0;
-
-	tot = (tot > idle_us) ? tot - idle_us : 0;
+	uint64_t raw = now - turn_t0;
+	uint64_t tot = (raw > idle_us) ? raw - idle_us : 0;
+	uint64_t rst = (raw > claimed_us) ? raw - claimed_us : 0;
 
 	if (!header_done) {
-		printf("TLH n turn d tot was lit upd fgn mkn scn trp mon wld gen frm idle brk\n");
+		printf("TLH n turn d tot was lit upd fgn mkn scn trp mon wld gen frm idle brk"
+		       " cln ply ntc bon upm pan map rdr evr anm kbp rst\n");
 		header_done = true;
 	}
 
 	record_n++;
 
-	printf("TL %lu %ld %d %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %u\n",
+	// Two printfs, one line: the stage 070 columns unchanged, then stage 075's.
+	printf("TL %lu %ld %d %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %u",
 	       (unsigned long)record_n,
 	       (long)game_turn,
 	       depth,
@@ -128,7 +164,20 @@ void turnlog_end(int depth, int32_t game_turn)
 	       (unsigned long)phase_us[TURNLOG_GEN],
 	       (unsigned long)pico_term_last_fresh_us(),
 	       (unsigned long)idle_us,
-	       (unsigned)(psram_heap_used() / 1024u));
+		       (unsigned)(psram_heap_used() / 1024u));
+	printf(" %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu\n",
+	       (unsigned long)phase_us[TURNLOG_CLEANUP],
+	       (unsigned long)phase_us[TURNLOG_PLAYER],
+	       (unsigned long)phase_us[TURNLOG_NOTICE],
+	       (unsigned long)phase_us[TURNLOG_BONUS],
+	       (unsigned long)phase_us[TURNLOG_UPDMON],
+	       (unsigned long)phase_us[TURNLOG_PANEL],
+	       (unsigned long)phase_us[TURNLOG_MAP],
+	       (unsigned long)phase_us[TURNLOG_REDRAW],
+	       (unsigned long)phase_us[TURNLOG_REFRESH],
+	       (unsigned long)phase_us[TURNLOG_ANIMATE],
+	       (unsigned long)phase_us[TURNLOG_KBPOLL],
+	       (unsigned long)rst);
 }
 
 #else /* !ANGBAND_TURN_LOG */

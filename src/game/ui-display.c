@@ -58,6 +58,12 @@
 #include "ui-term.h"
 #include "ui-visuals.h"
 #include "wizard.h"
+/*
+ * PORT: angband-picocalc stage 075, 2026-09-13. Measurement only: the whole-map branch of
+ * update_maps() is bracketed, and with ANGBAND_TURN_LOG unset the macros are ((void)0).
+ * See src/platform/turnlog.h.
+ */
+#include "turnlog.h"
 
 /**
  * There are a few functions installed to be triggered by several 
@@ -1384,8 +1390,11 @@ static void update_maps(game_event_type type, game_event_data *data, void *user)
 	term *t = user;
 
 	/* This signals a whole-map redraw. */
-	if (data->point.x == -1 && data->point.y == -1)
+	if (data->point.x == -1 && data->point.y == -1) {
+		TURNLOG_MARK(tl_map);	/* PORT: stage 075 */
 		prt_map();
+		TURNLOG_SELF(TURNLOG_MAP, tl_map);	/* PORT: stage 075 */
+	}
 
 	/* Single point to be redrawn */
 	else {

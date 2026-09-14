@@ -644,6 +644,15 @@ set(ANGBAND_SRAM_LIBRARY_MEMBERS
     *libg.a:libc_a-strcmp.o *libg.a:libc_a-strchr.o *libg.a:libc_a-strcpy.o
     *libg.a:libc_a-strlen-stub.o *libg.a:libc_a-strlen.o *libg.a:libc_a-strstr.o *libg.a:libc_a-ctype_.o
     */pico_malloc/malloc.c.obj)
+# PORT: stage 075 item 1. The instrument itself, when it is built. Stage 075's brackets sit
+# inside notice_stuff/update_stuff/redraw_stuff, which run many times a step from SRAM code
+# between PSRAM reads; with turnlog.c and time_us_64() in flash each bracket paid the QMI
+# alternation, and round s075-r0 read +9.7 % on the depth-1 turn. Bench builds only: with
+# ANGBAND_TURN_LOG OFF the list, the image and the shipped RAM line are unchanged.
+if(ANGBAND_TURN_LOG)
+    list(APPEND ANGBAND_SRAM_LIBRARY_MEMBERS
+        */src/platform/turnlog.c.obj */hardware_timer/timer.c.obj)
+endif()
 set(ANGBAND_SRAM_PATTERNS "")
 foreach(obj IN LISTS ANGBAND_SRAM_OBJECTS)
     string(APPEND ANGBAND_SRAM_PATTERNS " */src/game/${obj}.c.obj")

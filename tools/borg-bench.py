@@ -429,7 +429,9 @@ def reduce_round(capture, tag):
     # a capture by hand and wrong here, because a table that reaches the run log is a
     # table someone will compare with another one.
     numbers = [int(l.split()[1]) for l in read_text(out_txt).splitlines()
-               if l.startswith("TL ") and len(l.split()) == 18]
+               if l.startswith("TL ") and len(l.split()) >= 18]
+    # Stage 075: turnlog.c appends columns after the stage 070 seventeen; the prefix is
+    # unchanged, so a record is one with AT LEAST the stage 070 fields.
     holes = [(a, b) for a, b in zip(numbers, numbers[1:]) if b != a + 1]
     if holes:
         raise Refusal(
@@ -466,7 +468,7 @@ def median_of(path, depth, key="tot"):
         if not line.startswith("TL "):
             continue
         parts = line.split()[1:]
-        if len(parts) != len(fields):
+        if len(parts) < len(fields):	# stage 075 columns follow the stage 070 prefix
             continue
         rec = dict(zip(fields, parts))
         if int(rec["d"]) == depth:
@@ -555,7 +557,7 @@ def phase_medians(tag):
     rows = {}
     for line in io.open(os.path.join(BENCH, tag + ".txt"), encoding="utf-8", errors="replace"):
         parts = line.split()
-        if not line.startswith("TL ") or len(parts) != len(TL_FIELDS) + 1:
+        if not line.startswith("TL ") or len(parts) < len(TL_FIELDS) + 1:  # stage 075 appends
             continue
         rec = dict(zip(TL_FIELDS, map(int, parts[1:])))
         rec["SWEEPS"] = sum(rec[k] for k in TL_LEAVES)
