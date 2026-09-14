@@ -308,6 +308,13 @@ endif()
 # -w here; tools/compile-sweep.sh is the build that runs with -Wall and counts warnings.
 target_compile_options(angband_core PRIVATE -w -ffunction-sections -fdata-sections)
 
+# STAGE 070 ITEM 6: the core's optimisation level. MinSizeRel's -Os is everywhere else;
+# the core alone gets -O2 (it comes after -Os on the command line, and the last -O wins).
+# Flash is not scarce -- 16 MB, under 1 MB used -- and SRAM has room for the larger hot
+# objects ANGBAND_SRAM_OBJECTS moves. Placement-only and optimisation-only changes cannot
+# move the host pre-check by construction; the bench round is what decides this one.
+target_compile_options(angband_core PRIVATE -O2)
+
 # The core is gnu99 (specifications.md 10). It is set here rather than globally so the
 # SDK's own sources keep C11; see the CMAKE_C_STANDARD note at the top.
 set_target_properties(angband_core PROPERTIES C_STANDARD 99 C_EXTENSIONS ON)
