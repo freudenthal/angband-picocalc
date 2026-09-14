@@ -92,8 +92,11 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-**Seventeen** vendored files are edited, and `ui-game.c` carries one more hunk since harness
-stage 055 (section 6). Each edit is wrapped in a `PORT:` banner; every hunk of
+**Twenty** vendored files are edited, and `ui-game.c` carries one more hunk since harness
+stage 055 (section 6). Stage 070 run 3 added `cave.h`, `cave.c` and `cave-square.c` and
+further hunks in `cave-view.c` and `game-world.c` (section 7) — **the first edits in this
+tree that change what the game computes**, each proved by the desk pre-check and a lockstep
+bench round. Each edit is wrapped in a `PORT:` banner; every hunk of
 `git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`. **The 118 files of
 `src/game/borg/` are not among them and must stay that way** — they were vendored unmodified
 and all 59 sources compiled clean against this core on the first attempt.
@@ -292,6 +295,47 @@ would be mostly the player's thinking time.
 frees `cave->height * cave->width` ints — 52,276 bytes of PSRAM — on every player step, and
 stage 070 item 5 wants the cost measured before it is hoisted.
 
+*(Stage 070 item 5 has since hoisted that queue; see section 7.)*
+
+### 7. `cave.h`, `cave.c`, `cave-square.c`, `cave-view.c`, `game-world.c` — stage 070 speed edits
+
+Stage 070 run 3, 2026-09-13. **These are the only edits in this tree that change what the
+game code does rather than where it runs or what it draws**, and each one was held to two
+checks before any device time: the desk pre-check (`host-build.sh --borg --arm`, replay
+`borg-arm.keys`, `cmp` the `.sync` — identical over 1,001 commands for every one), and a
+bench round in lockstep. Item 10's two also passed a host self-test described below.
+
+| Item | File | Edit |
+|---|---|---|
+| 4 | `cave.h`, `cave.c`, `cave-square.c` | `struct square`'s `bitflag *info` becomes `bitflag info[SQUARE_SIZE]`. The per-grid `mem_zalloc` in `cave_new()` and the `mem_free` in `cave_free()` go (and the loop variable `x` with them); `square()` returns `struct square *`, not `const`, because an array member of a const struct decays to `const bitflag *`. `load.c` and `save.c` index the array and are untouched, so the save format is unchanged. `struct connector`'s own `info` pointer is a different thing and is untouched. |
+| 5 | `game-world.c` | `make_noise()` keeps one `struct queue` for the program instead of `q_new()`/`q_free()` of `height * width` entries per step, and empties it on entry. `forget_noise()` zeroes each interior row with one `memset`. |
+| 10a | `cave.h`, `cave-view.c` | `struct chunk` gains `view_valid`, `view_min`, `view_max` — the box the last `update_view()` worked in, zeroed by `cave_new()`. `mark_wasseen()` sweeps that box, and the `update_view()` main loop sweeps the hull of it and the new box (the player's grid ± `z_info->max_sight`). An invalid box is the whole level, which is upstream's loop exactly. |
+| 10b | `cave-view.c` | `calc_lighting()`'s permanent-light pass runs over the new box plus one grid; the light indicator is redrawn unconditionally when the player's grid was outside the last box. |
+
+**Why 10a is exact.** Only `update_view()` sets `SQUARE_VIEW`, `SQUARE_SEEN`,
+`SQUARE_CLOSE_PLAYER` and `SQUARE_WASSEEN` (grep: every other writer clears them), and it can
+set them only inside the new box, because `update_view_one()` returns at once when
+`distance() > max_sight` and `distance()` is never less than the larger of |dx| and |dy|.
+`update_one()` does nothing to a grid with neither `SEEN` nor `WASSEEN`. So the loop visits,
+in upstream's row-major order, every grid where it can have an effect. Every chunk the game
+can make current comes out of `cave_new()`, so a loaded, generated or copied chunk gets one
+full sweep first.
+
+**Why 10b is exact where it is read.** A grid's `light` is read only at a `SEEN` grid
+(`map_info()`), at the player's grid (`ui-display.c`, `player-spell.c`), and inside
+`update_view()` at grids of the box. Grids outside keep stale values that nothing reads
+before a later pass resets them. The one read that can see a stale value is `old_light`
+after a teleport, and that only decides whether `PR_LIGHT` is set; setting it anyway redraws
+the indicator with its correct value.
+
+**The self-test**, scaffolding that is not committed: a host build in which every
+`update_view()` call snapshots all squares, runs the full sweep, restores, runs the bounded
+one, and compares the four flags on every grid and `light` on every grid of the box. Over
+1,001 replayed commands: **1,649 calls, 1,609 of them bounded, 0 differing flags, 0
+differing light values.** The same harness with the lighting box deliberately shrunk by four
+grids reported 913 bad calls and 3,008 differing light values, so it can see a fault. The
+script is `.llm/scratch/s070r3/view-selftest.c`.
+
 **The data files are 64 columns too.** `lib/screens/news.txt` is re-drawn (its colour markup
 counts against the line length, so the art had to lose about sixteen columns and the quote
 is re-wrapped); `dead.txt` and `retire.txt` are trimmed; `lib/help/*.txt` is re-wrapped by
@@ -423,6 +467,39 @@ of 520 KB.
 
 **If this is ever reverted**, the stack goes back to 2 KB in `SCRATCH_Y` and the game faults
 during `init_angband()`. It is not optional on this part.
+
+## The hot code in SRAM: two more, generated, overrides
+
+Stage 070 item 3 (2026-09-13). `src/link/default_text_excludes.incl.in` (which also carries
+item 8's `.text` pad) and `src/link/default_rodata_excludes.incl.in` replace the SDK's
+one-line files of the same names. CMake writes both into `<build>/link-gen/` with every
+object in `ANGBAND_SRAM_OBJECTS` (as `*/src/game/<name>.c.obj`) and every pattern in
+`ANGBAND_SRAM_LIBRARY_MEMBERS` added to the `EXCLUDE_FILE` list. The SDK's own
+`section_default_data.incl` already gathers `*(.text*)` and `*(.rodata*)` into `.data`,
+which is `> RAM AT> RAM_STORE`, so an excluded object lands in SRAM with no third file.
+
+**Why.** Flash and PSRAM share one QMI, and a loop running from flash while reading the
+PSRAM heap pays 6,297-7,949 ns an access (`specifications.md` §6.4) — which is what the whole
+game loop is. Moving the code: depth-1 turn 2,430 → 117 ms together with items 4-10 (the
+placement alone, four tranches, is most of it). SRAM-resident code also stops moving with
+`.text` placement, which is what makes the other items measurable.
+
+**What is in the list**: 55 core objects (the cave, view, world, monster, map, player, UI,
+object, projection and message code) and, verbatim, newlib's allocator and string members.
+**This toolchain's newlib is `libg.a`, not `libc.a`**, so the SDK's `*libc.a:` exclusion never
+matched and `malloc`/`free` ran from flash over PSRAM free lists; moving them took
+`init_angband()` from ~204 s to ~115 s as a side effect. RAM is 472 KB of 512 on the bench
+build and 468 KB on the shipped one; **the list is bounded by that, not by ambition**.
+
+**Check with `tools/sram-check.py <build-tree>`, never by reading the list.** It looks up
+every defined function and read-only symbol of every listed game object in the linked ELF
+and fails on any that is not at `0x2000xxxx`. A placement that silently fails looks exactly
+like one that worked (stage 045). The library members are checked by `nm` by name.
+
+**Two traps found building it.** A pattern for `cave.c` must carry the directory separator
+or it also matches `gen-cave.c` and `cmd-cave.c`. And the generated file's comment must not
+name the substitution: every pattern begins with a star and a slash, which closes a C
+comment, and `ld` then fails with "ignoring invalid character".
 
 ## `USE_PRIVATE_PATHS`
 
