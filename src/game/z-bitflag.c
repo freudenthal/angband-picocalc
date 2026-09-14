@@ -25,19 +25,7 @@
  * true is returned when `flag` is on in `flags`, and false otherwise.
  * The flagset size is supplied in `size`.
  */
-bool flag_has(const bitflag *flags, const size_t size, const int flag)
-{
-	const size_t flag_offset = FLAG_OFFSET(flag);
-	const int flag_binary = FLAG_BINARY(flag);
-
-	if (flag == FLAG_END) return false;
-
-	assert(flag_offset < size);
-
-	if (flags[flag_offset] & flag_binary) return true;
-
-	return false;
-}
+/* PORT: stage 075 item 3 -- flag_has() is static inline in z-bitflag.h. */
 
 #ifndef NDEBUG
 bool flag_has_dbg(const bitflag *flags, const size_t size, const int flag,
@@ -195,19 +183,7 @@ bool flag_is_equal(const bitflag *flags1, const bitflag *flags2,
  * supplied in `size`.  true is returned when changes were made, false
  * otherwise.
  */
-bool flag_on(bitflag *flags, const size_t size, const int flag)
-{
-	const size_t flag_offset = FLAG_OFFSET(flag);
-	const int flag_binary = FLAG_BINARY(flag);
-
-	assert(flag_offset < size);
-
-	if (flags[flag_offset] & flag_binary) return false;
-
-	flags[flag_offset] |= flag_binary;
-
-	return true;
-}
+/* PORT: stage 075 item 3 -- flag_on() is static inline in z-bitflag.h. */
 
 #ifndef NDEBUG
 bool flag_on_dbg(bitflag *flags, const size_t size, const int flag,
@@ -236,19 +212,7 @@ bool flag_on_dbg(bitflag *flags, const size_t size, const int flag,
  * is supplied in `size`.  true is returned when changes were made, false
  * otherwise.
  */
-bool flag_off(bitflag *flags, const size_t size, const int flag)
-{
-	const size_t flag_offset = FLAG_OFFSET(flag);
-	const int flag_binary = FLAG_BINARY(flag);
-
-	assert(flag_offset < size);
-
-	if (!(flags[flag_offset] & flag_binary)) return false;
-
-	flags[flag_offset] &= ~flag_binary;
-
-	return true;
-}
+/* PORT: stage 075 item 3 -- flag_off() is static inline in z-bitflag.h. */
 
 
 /**

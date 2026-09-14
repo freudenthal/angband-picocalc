@@ -59,7 +59,58 @@ typedef uint8_t bitflag;
 #define FLAG_BINARY(id)   (1 << ((id) - FLAG_START) % FLAG_WIDTH)
 
 
-bool flag_has       (const bitflag *flags, const size_t size, const int flag);
+/*
+ * PORT: angband-picocalc stage 075 item 3, 2026-09-13. flag_has(), flag_on() and flag_off()
+ * are static inline here and no longer defined in z-bitflag.c. The core has no LTO, so every
+ * sqinfo_has() in the SRAM hot loops was an out-of-line call into another translation unit
+ * (93 M calls in the host replay's profile). Bodies unchanged, asserts kept; nothing in the
+ * tree takes their address, so no out-of-line copy is needed.
+ */
+static inline bool flag_has(const bitflag *flags, const size_t size, const int flag)
+{
+	const size_t flag_offset = FLAG_OFFSET(flag);
+	const int flag_binary = FLAG_BINARY(flag);
+
+	(void)size;
+	if (flag == FLAG_END) return false;
+
+	assert(flag_offset < size);
+
+	if (flags[flag_offset] & flag_binary) return true;
+
+	return false;
+}
+
+static inline bool flag_on(bitflag *flags, const size_t size, const int flag)
+{
+	const size_t flag_offset = FLAG_OFFSET(flag);
+	const int flag_binary = FLAG_BINARY(flag);
+
+	(void)size;
+	assert(flag_offset < size);
+
+	if (flags[flag_offset] & flag_binary) return false;
+
+	flags[flag_offset] |= flag_binary;
+
+	return true;
+}
+
+static inline bool flag_off(bitflag *flags, const size_t size, const int flag)
+{
+	const size_t flag_offset = FLAG_OFFSET(flag);
+	const int flag_binary = FLAG_BINARY(flag);
+
+	(void)size;
+	assert(flag_offset < size);
+
+	if (!(flags[flag_offset] & flag_binary)) return false;
+
+	flags[flag_offset] &= ~flag_binary;
+
+	return true;
+}
+
 int  flag_next      (const bitflag *flags, const size_t size, const int flag);
 int  flag_count     (const bitflag *flags, const size_t size);
 bool flag_is_empty  (const bitflag *flags, const size_t size);
@@ -70,8 +121,6 @@ bool flag_is_subset (const bitflag *flags1, const bitflag *flags2,
 					 const size_t size);
 bool flag_is_equal  (const bitflag *flags1, const bitflag *flags2,
 					 const size_t size);
-bool flag_on        (bitflag *flags, const size_t size, const int flag);
-bool flag_off       (bitflag *flags, const size_t size, const int flag);
 void flag_wipe      (bitflag *flags, const size_t size);
 void flag_setall    (bitflag *flags, const size_t size);
 void flag_negate    (bitflag *flags, const size_t size);

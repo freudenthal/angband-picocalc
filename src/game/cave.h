@@ -374,7 +374,19 @@ bool square_isdisabledtrap(struct chunk *c, struct loc grid);
 bool square_isdisarmabletrap(struct chunk *c, struct loc grid);
 bool square_dtrap_edge(struct chunk *c, struct loc grid);
 bool square_changeable(struct chunk *c, struct loc grid);
-bool square_in_bounds(struct chunk *c, struct loc grid);
+/*
+ * PORT: angband-picocalc stage 075 item 3, 2026-09-13. square_in_bounds() and square() are
+ * static inline here and no longer defined in cave-square.c: 237 M and 136 M out-of-line
+ * cross-unit calls in the host replay's profile, and the core has no LTO. Bodies and asserts
+ * unchanged; nothing takes their address.
+ */
+static inline bool square_in_bounds(struct chunk *c, struct loc grid)
+{
+	assert(c);
+	return grid.x >= 0 && grid.x < c->width &&
+		grid.y >= 0 && grid.y < c->height;
+}
+
 bool square_in_bounds_fully(struct chunk *c, struct loc grid);
 bool square_isbelievedwall(struct chunk *c, struct loc grid);
 bool square_isknownpassable(struct chunk *c, struct loc grid);
@@ -383,7 +395,12 @@ bool square_suits_stairs_ok(struct chunk *c, struct loc grid);
 bool square_allows_summon(struct chunk *c, struct loc grid);
 
 
-struct square *square(struct chunk *c, struct loc grid);	/* PORT: stage 070 item 4, not const */
+/* PORT: stage 070 item 4, not const; stage 075 item 3, static inline */
+static inline struct square *square(struct chunk *c, struct loc grid)
+{
+	assert(square_in_bounds(c, grid));
+	return &c->squares[grid.y][grid.x];
+}
 struct feature *square_feat(struct chunk *c, struct loc grid);
 int square_light(struct chunk *c, struct loc grid);
 struct monster *square_monster(struct chunk *c, struct loc grid);

@@ -884,12 +884,7 @@ bool square_changeable(struct chunk *c, struct loc grid)
 }
 
 
-bool square_in_bounds(struct chunk *c, struct loc grid)
-{
-	assert(c);
-	return grid.x >= 0 && grid.x < c->width &&
-		grid.y >= 0 && grid.y < c->height;
-}
+/* PORT: stage 075 item 3 -- square_in_bounds() is static inline in cave.h. */
 
 bool square_in_bounds_fully(struct chunk *c, struct loc grid)
 {
@@ -960,11 +955,7 @@ bool square_allows_summon(struct chunk *c, struct loc grid)
  * Below are various square-specific functions which are not predicates
  */
 
-struct square *square(struct chunk *c, struct loc grid)	/* PORT: stage 070 item 4, not const */
-{
-	assert(square_in_bounds(c, grid));
-	return &c->squares[grid.y][grid.x];
-}
+/* PORT: stage 070 item 4, not const; stage 075 item 3, square() is static inline in cave.h. */
 
 struct feature *square_feat(struct chunk *c, struct loc grid)
 {
