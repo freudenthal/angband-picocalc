@@ -445,10 +445,16 @@ bool los(struct chunk *c, struct loc grid1, struct loc grid2)
 static void mark_wasseen(struct chunk *c)
 {
 	struct loc grid;
+	/*
+	 * PORT: stage 070 item 10. Sweep only the box the last update_view() worked in;
+	 * outside it none of the four flags touched here can be set (cave.h, struct chunk).
+	 */
+	struct loc lo = c->view_valid ? c->view_min : loc(0, 0);
+	struct loc hi = c->view_valid ? c->view_max : loc(c->width - 1, c->height - 1);
 
 	/* Save the old "view" grids for later */
-	for (grid.y = 0; grid.y < c->height; grid.y++) {
-		for (grid.x = 0; grid.x < c->width; grid.x++) {
+	for (grid.y = lo.y; grid.y <= hi.y; grid.y++) {
+		for (grid.x = lo.x; grid.x <= hi.x; grid.x++) {
 			if (square_isseen(c, grid)) {
 				sqinfo_on(square(c, grid)->info, SQUARE_WASSEEN);
 				sqinfo_off(square(c, grid)->info, SQUARE_SEEN);
@@ -893,6 +899,30 @@ static void update_one(struct chunk *c, struct loc grid, struct player *p)
 void update_view(struct chunk *c, struct player *p)
 {
 	struct loc grid;
+	/*
+	 * PORT: angband-picocalc stage 070 item 10, 2026-09-13. THE VIEW BOX. Upstream
+	 * sweeps all 13,068 grids of the level three times here. The result is unchanged if
+	 * the main loop visits, in the same row-major order, every grid where it can do
+	 * anything, and that is the hull of two boxes:
+	 *
+	 *  - the new box, the player's grid +/- max_sight: update_view_one() returns at once
+	 *    for any grid with distance() > max_sight, and distance() is never less than the
+	 *    larger of |dx| and |dy|, so outside this box it does nothing;
+	 *  - the old box, where the previous call could have left SQUARE_SEEN (now turned
+	 *    into SQUARE_WASSEEN by mark_wasseen()): update_one() on a grid with neither flag
+	 *    set does nothing, and nothing but this function sets either.
+	 *
+	 * A teleport makes the hull large, not wrong. An invalid box (a chunk this function
+	 * has not seen yet) is the whole level, which is upstream's loop exactly.
+	 */
+	int sight = z_info->max_sight;
+	struct loc nmin = loc(MAX(p->grid.x - sight, 0), MAX(p->grid.y - sight, 0));
+	struct loc nmax = loc(MIN(p->grid.x + sight, c->width - 1),
+		MIN(p->grid.y + sight, c->height - 1));
+	struct loc lo = c->view_valid ? loc(MIN(c->view_min.x, nmin.x),
+		MIN(c->view_min.y, nmin.y)) : loc(0, 0);
+	struct loc hi = c->view_valid ? loc(MAX(c->view_max.x, nmax.x),
+		MAX(c->view_max.y, nmax.y)) : loc(c->width - 1, c->height - 1);
 
 	/* Record the current view */
 	TURNLOG_MARK(tl_was);			/* PORT: stage 070, sweep 1 */
@@ -923,8 +953,8 @@ void update_view(struct chunk *c, struct player *p)
 	}
 
 	TURNLOG_MARK(tl_upd);			/* PORT: stage 070, sweep 3 */
-	for (grid.y = 0; grid.y < c->height; grid.y++) {
-		for (grid.x = 0; grid.x < c->width; grid.x++) {
+	for (grid.y = lo.y; grid.y <= hi.y; grid.y++) {		/* PORT: item 10 */
+		for (grid.x = lo.x; grid.x <= hi.x; grid.x++) {
 			/*
 			 * A square we have LOS to get marked as in the view,
 			 * and perhaps seen
@@ -936,6 +966,11 @@ void update_view(struct chunk *c, struct player *p)
 		}
 	}
 	TURNLOG_ACC(TURNLOG_UPDVIEW, tl_upd);	/* PORT: stage 070 */
+
+	/* PORT: stage 070 item 10 -- where this call could have set the view flags */
+	c->view_min = nmin;
+	c->view_max = nmax;
+	c->view_valid = true;
 }
 
 

@@ -219,6 +219,18 @@ struct chunk {
 	struct monster_group **monster_groups;
 
 	struct connector *join;
+
+	/*
+	 * PORT: angband-picocalc stage 070 item 10, 2026-09-13. The box update_view() last
+	 * worked in: the player's grid +/- z_info->max_sight, clipped to the chunk. Only
+	 * update_view() sets SQUARE_VIEW, SQUARE_SEEN, SQUARE_CLOSE_PLAYER and SQUARE_WASSEEN,
+	 * and only inside that box, so the next call need not sweep the rest of the level.
+	 * cave_new() zeroes it, so a new, loaded or copied chunk starts invalid and gets one
+	 * full sweep. See cave-view.c.
+	 */
+	bool view_valid;
+	struct loc view_min;
+	struct loc view_max;
 };
 
 /*** Feature Indexes (see "lib/gamedata/terrain.txt") ***/
