@@ -48,7 +48,8 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 | `src/termdiag.c` | The stage 040 terminal diagnostic. Port-written. |
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
-| `tools/` | The suite, the heap probe, the screen sweep and `rewrap-help.py`. Port-written. |
+| `tools/` | The suite, the heap probe, the screen sweep, `rewrap-help.py` and `stage-card.sh` (stage 080, the card staging). Port-written. |
+| `README.md` | Operator documentation: build, card, play, licence. Stage 080. |
 | `copying.txt` | Upstream `docs/copying.rst`, renamed. |
 | `build-sweep/`, `build-host/`, `build-pico2/` | Generated. Gitignored. |
 
@@ -381,6 +382,11 @@ is re-wrapped); `dead.txt` and `retire.txt` are trimmed; `lib/help/*.txt` is re-
 `tools/rewrap-help.py`, which re-flows prose paragraphs and turns the two- and three-column
 key tables into one entry per line. `awk 'length > 64' lib/help/*.txt lib/screens/*.txt`
 prints nothing.
+
+Stage 080 centred the splash: every `news.txt` line moves right six columns, so the art sits
+in display columns 8-56 of 64; the quote is re-wrapped to 40 columns at indent 8 (six lines,
+not five), and the two link lines and the help line are placed by hand. The longest line is
+64 bytes. `tools/stage-card.sh` now runs the 64-byte check on every staging.
 
 ## The platform layer
 

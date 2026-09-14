@@ -1,22 +1,23 @@
 
-{mud}          ^               ^                 ^{/}
-{mud}         ^^^             ^^^               ^^^{/}
-{mud}        ^^^^^           ^^^^^             ^^^^^{/}
-{red}       _              _                 _{/}
-{red}      / \   _ __   __ _| |__   __ _ _ __   __| |{/}
-{red}     / _ \ | '_ \ / _` | '_ \ / _` | '_ \ / _` |{/}
-{red}    / ___ \| | | | (_| | |_) | (_| | | | | (_| |{/}
-{red}   /_/   \_\_| |_|\__, |_.__/ \__,_|_| |_|\__,_|{/}
-{red}                  |___/{/}  $VERSION
-{mud}  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^{/}
+{mud}                ^               ^                 ^{/}
+{mud}               ^^^             ^^^               ^^^{/}
+{mud}              ^^^^^           ^^^^^             ^^^^^{/}
+{red}             _              _                 _{/}
+{red}            / \   _ __   __ _| |__   __ _ _ __   __| |{/}
+{red}           / _ \ | '_ \ / _` | '_ \ / _` | '_ \ / _` |{/}
+{red}          / ___ \| | | | (_| | |_) | (_| | | | | (_| |{/}
+{red}         /_/   \_\_| |_|\__, |_.__/ \__,_|_| |_|\__,_|{/}
+{red}                        |___/{/}  $VERSION
+{mud}        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^{/}
 
-{light slate}      "When the world is old and the Powers grow{/}
-{light slate}      weary, then Morgoth, seeing that the guard{/}
-{light slate}      sleepeth, shall come back through the Door{/}
-{light slate}      of Night out of the Timeless Void.  Then{/}
-{light slate}      shall the Last Battle be gathered..."{/}
+{light slate}        "When the world is old and the Powers{/}
+{light slate}        grow weary, then Morgoth, seeing that{/}
+{light slate}        the guard sleepeth, shall come back{/}
+{light slate}        through the Door of Night out of the{/}
+{light slate}        Timeless Void.  Then shall the Last{/}
+{light slate}        Battle be gathered..."{/}
 
-{light slate}               Website: http://rephial.org/{/}
-{light slate}           Forums: https://angband.live/forums/{/}
+{light slate}                Website: http://rephial.org/{/}
+{light slate}            Forums: https://angband.live/forums/{/}
 
                    For help press '?' in-game
