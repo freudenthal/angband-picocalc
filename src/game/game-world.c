@@ -1203,7 +1203,21 @@ void make_noise(struct player *p, const struct loc *origin,
 	 * hoisting it.
 	 */
 	TURNLOG_MARK(tl_noise);
-	struct queue *queue = q_new(cave->height * cave->width);
+	/*
+	 * PORT: angband-picocalc stage 070 item 5, 2026-09-13. Upstream is
+	 * `struct queue *queue = q_new(cave->height * cave->width);` and a q_free() at the
+	 * end: a 52 KB allocation and free on every player step. One queue now lives for the
+	 * program and is emptied here. The flood pushes each grid at most once from an empty
+	 * queue, so it never wraps, and a queue left larger by a bigger level behaves
+	 * identically.
+	 */
+	static struct queue *queue = NULL;
+	size_t queue_need = cave->height * cave->width;
+	if (!queue || q_size(queue) < queue_need) {
+		if (queue) q_free(queue);
+		queue = q_new(queue_need);
+	}
+	queue->head = queue->tail = 0;
 
 	/*
 	 * Remember the source of the noise and falloff so it can be
@@ -1271,7 +1285,7 @@ void make_noise(struct player *p, const struct loc *origin,
 		}
 	}
 
-	q_free(queue);
+	/* PORT: stage 070 item 5 -- the queue is kept (above), not freed */
 	TURNLOG_ACC(TURNLOG_NOISE, tl_flood);	/* PORT: stage 070 */
 }
 
@@ -1281,12 +1295,16 @@ void make_noise(struct player *p, const struct loc *origin,
  */
 void forget_noise(void)
 {
-	int y, x;
+	int y;
 
-	for (y = 1; y < cave->height - 1; y++) {
-		for (x = 1; x < cave->width - 1; x++) {
-			cave->noise.grids[y][x] = 0;
-		}
+	/*
+	 * PORT: angband-picocalc stage 070 item 5, 2026-09-13. One memset per row of the
+	 * same interior span upstream zeroes a grid at a time (stage 020: memset is the way to
+	 * write PSRAM).
+	 */
+	for (y = 1; y < cave->height - 1 && cave->width > 2; y++) {
+		memset(&cave->noise.grids[y][1], 0,
+			(cave->width - 2) * sizeof(cave->noise.grids[y][1]));
 	}
 }
 
