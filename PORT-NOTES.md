@@ -92,7 +92,7 @@ Deleted from `lib/`: `tiles/` (28 files, ~20 MB), `sounds/` (214 files, ~3.4 MB)
 <a id="port-edits"></a>
 ## PORT: edits
 
-**Twenty** vendored files are edited, and `ui-game.c` carries one more hunk since harness
+**Twenty-four** vendored files are edited (stage 075 added `player-calcs.c`, `trap.c`, `z-bitflag.c` and `z-bitflag.h`), and `ui-game.c` carries one more hunk since harness
 stage 055 (section 6). Stage 070 run 3 added `cave.h`, `cave.c` and `cave-square.c` and
 further hunks in `cave-view.c` and `game-world.c` (section 7) — **the first edits in this
 tree that change what the game computes**, each proved by the desk pre-check and a lockstep
@@ -297,7 +297,23 @@ stage 070 item 5 wants the cost measured before it is hoisted.
 
 *(Stage 070 item 5 has since hoisted that queue; see section 7.)*
 
-### 7. `cave.h`, `cave.c`, `cave-square.c`, `cave-view.c`, `game-world.c` — stage 070 speed edits
+**Stage 075 item 1 added brackets for the rest of the turn**, again measurement only:
+`process_player_cleanup()`, the three `process_player()` calls, `EVENT_REFRESH` and
+`EVENT_ANIMATE` in `run_game_loop()` (`game-world.c`); `notice_stuff()`, `update_stuff()` up
+to the `character_generated` test, both `update_monsters()` calls, the `PU_PANEL` signal and
+`redraw_stuff()` (`player-calcs.c`, inside the functions because they have dozens of
+callers); the whole-map branch of `update_maps()` (`ui-display.c`); and the non-waiting
+`check_events(false)` poll (`main-pico.c`). Two early returns in `redraw_stuff()` gained
+braces so the bracket closes on them. **These new phases are self time** -- a window less
+every bracket that closed inside it -- because `handle_stuff()` is reached from inside
+`process_player()`, `process_world()` and `process_monsters()`; the stage 070 phases keep
+their inclusive meaning. `turnlog_end()` also prints `rst`, the turn less the union of every
+bracket window, which is exact however the brackets nest. **With `ANGBAND_TURN_LOG` ON,
+`turnlog.c` and the SDK's `hardware_timer` are placed in SRAM** (`CMakeLists.txt`): from
+flash, the instrument's calls between PSRAM reads cost about 20 ms of the depth-1 turn it
+was measuring (rounds `s075-r0` and `s075-r0b`).
+
+### 7. `cave.h`, `cave.c`, `cave-square.c`, `cave-view.c`, `game-world.c`, `z-bitflag.[ch]`, `trap.c` — stage 070 and 075 speed edits
 
 Stage 070 run 3, 2026-09-13. **These are the only edits in this tree that change what the
 game code does rather than where it runs or what it draws**, and each one was held to two
@@ -335,6 +351,29 @@ one, and compares the four flags on every grid and `light` on every grid of the 
 differing light values.** The same harness with the lighting box deliberately shrunk by four
 grids reported 913 bad calls and 3,008 differing light values, so it can see a fault. The
 script is `.llm/scratch/s070r3/view-selftest.c`.
+
+**Stage 075, 2026-09-13.** Two more, each with the desk pre-check (1,001 records identical)
+and a bench round in lockstep.
+
+| Item | File | Edit |
+|---|---|---|
+| 3 | `cave.h`, `cave-square.c`, `z-bitflag.h`, `z-bitflag.c` | `square_in_bounds()`, `square()`, `flag_has()`, `flag_on()` and `flag_off()` move into the headers as `static inline`, bodies and `assert`s unchanged. Not a semantic edit: the core has no LTO, so these were out-of-line cross-unit calls in every hot loop. Nothing in the tree takes their address (grep), so no out-of-line copy is kept. |
+| 4 | `cave.h`, `cave.c`, `trap.c`, `game-world.c` | `struct chunk` gains `int timed_traps`, an **upper bound** on traps with a non-zero `timeout`. `cave_new()` sets it to 1; `square_set_trap_timeout()` adds 1 to the chunk it was given when it sets a non-zero time; `process_world()`'s trap sweep runs only while the bound is non-zero and sets it to the number of traps still timed after the decrement. Not saved. |
+
+**Why 4 is exact.** The sweep's only effect is on traps whose `timeout` is non-zero. The
+writers of a trap's `timeout` (grep over `src/game/*.c`) are the sweep's own decrement,
+`square_set_trap_timeout()` in `trap.c` (counted), `rd_byte(&trap->timeout)` in `load.c`
+(into a chunk `cave_new()` has just made, bound 1), and `square_memorize_traps()`'s `memcpy`
+(into `player->cave`, which is never swept). Traps moved by `chunk_copy()` go into chunks
+from `cave_new()`. Nothing the sweep itself calls (`square_memorize_traps()`,
+`square_light_spot()`) sets a timeout, so the recount cannot overwrite an increment made
+during the walk. A trap freed while timed leaves the bound high for one extra sweep, never
+low. **The self-test** (scaffold, not committed,
+`.llm/scratch/s075/trap-selftest-scaffold.py`): before each bounded sweep, walk every trap
+unconditionally and fail if any `timeout` is non-zero while the bound is zero. The borg
+replay never times a trap (876 sweeps, 850 skipped, none timed), so the scaffold also injects
+a 3-turn timeout through `square_set_trap_timeout()` on every 40th sweep: 13 injections,
+**0 missed**; with the increment in `trap.c` removed, **324 missed**.
 
 **The data files are 64 columns too.** `lib/screens/news.txt` is re-drawn (its colour markup
 counts against the line length, so the art had to lose about sixteen columns and the quote

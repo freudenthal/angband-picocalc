@@ -121,6 +121,7 @@ bool flag_is_subset (const bitflag *flags1, const bitflag *flags2,
 					 const size_t size);
 bool flag_is_equal  (const bitflag *flags1, const bitflag *flags2,
 					 const size_t size);
+/* PORT: stage 075 item 3 -- flag_on() and flag_off() are static inline above. */
 void flag_wipe      (bitflag *flags, const size_t size);
 void flag_setall    (bitflag *flags, const size_t size);
 void flag_negate    (bitflag *flags, const size_t size);
