@@ -673,10 +673,37 @@ static void calc_lighting(struct chunk *c, struct player *p)
 	int dir, k;
 	int light = p->state.cur_light, radius = ABS(light) - 1;
 	int old_light = square_light(c, p->grid);
+	/*
+	 * PORT: angband-picocalc stage 070 item 10, 2026-09-13. THE LIGHTING BOX. Upstream
+	 * recomputes the light of all 13,068 grids. Nothing reads a grid's light except at a
+	 * SQUARE_SEEN grid (map_info), at the player's grid, and inside update_view() at
+	 * grids of the view box -- and SQUARE_SEEN is only ever set inside that box (see
+	 * update_view()). So the permanent-light pass runs over the view box plus one grid,
+	 * the one being for bright terrain just outside it that lights a neighbour inside.
+	 * A chunk update_view() has not seen yet gets upstream's whole-level pass.
+	 * Grids outside keep stale values that nothing reads before a later pass resets them.
+	 * add_light() below is unchanged; its writes outside the box are among those.
+	 */
+	int sight = z_info->max_sight;
+	struct loc lo = c->view_valid
+		? loc(MAX(p->grid.x - sight - 1, 0), MAX(p->grid.y - sight - 1, 0))
+		: loc(0, 0);
+	struct loc hi = c->view_valid
+		? loc(MIN(p->grid.x + sight + 1, c->width - 1),
+			MIN(p->grid.y + sight + 1, c->height - 1))
+		: loc(c->width - 1, c->height - 1);
+	/*
+	 * old_light is only upstream's value if the player's grid was inside the last box;
+	 * after a teleport it is stale, so the indicator is redrawn regardless. Redrawing it
+	 * with an unchanged value draws what is already there.
+	 */
+	bool light_stale = !c->view_valid
+		|| p->grid.x < c->view_min.x || p->grid.x > c->view_max.x
+		|| p->grid.y < c->view_min.y || p->grid.y > c->view_max.y;
 
 	/* Starting values based on permanent light */
-	for (grid.y = 0; grid.y < c->height; grid.y++) {
-		for (grid.x = 0; grid.x < c->width; grid.x++) {
+	for (grid.y = lo.y; grid.y <= hi.y; grid.y++) {		/* PORT: item 10 */
+		for (grid.x = lo.x; grid.x <= hi.x; grid.x++) {
 			if (square_isglow(c, grid) &&
 					(square_allowslos(c, grid) ||
 					glow_can_light_wall(c, p, grid))) {
@@ -735,7 +762,7 @@ static void calc_lighting(struct chunk *c, struct player *p)
 	}
 
 	/* Update light level indicator */
-	if (square_light(c, p->grid) != old_light) {
+	if (square_light(c, p->grid) != old_light || light_stale) {	/* PORT: item 10 */
 		p->upkeep->redraw |= PR_LIGHT;
 	}
 }
