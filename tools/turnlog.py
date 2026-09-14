@@ -232,20 +232,36 @@ def resolve(arg):
 
 
 def load_error_bar(override):
-    """The placement error bar, as a percentage, and where it came from.
+    """The placement error bar and where it came from.
 
-    Returns (pct_or_None, provenance string). None is not a failure: it is the honest
-    state of a project that has not run the placement sweep yet, and --compare says so on
-    every row rather than quietly marking small deltas as wins.
+    Returns (bar, provenance). `bar` is None when nothing is recorded -- the honest state
+    of a project that has not run the placement sweep, and --compare says so on every row
+    rather than quietly marking small deltas as wins -- or a function (depth, phase) -> pct.
+
+    PER DEPTH AND PER PHASE, because the 2026-09-13 sweep showed one number is wrong:
+    depth-1 `tot` spread 2.3 % across four placements while `lit` spread 6.8 % and `mkn`
+    21 % underneath it, and the town's `lit` 47 %. A single bar on every row would have
+    passed a 5 % `lit` change that placement alone produces. A file without `bars` (or an
+    --error-bar override) falls back to its one figure for every row, and says so.
     """
     if override is not None:
-        return override, "--error-bar on the command line"
+        return (lambda d, k: override), "--error-bar %.2f on the command line, EVERY row" % override
     try:
         with io.open(ERROR_BAR_FILE, encoding="utf-8") as f:
             data = json.load(f)
     except (IOError, OSError, ValueError):
         return None, None
-    return (data.get("pct"),
+
+    bars = data.get("bars")
+    headline = data.get("pct")
+    if bars:
+        def bar(depth, phase):
+            v = bars.get(str(depth), {}).get(phase)
+            return v if v is not None else headline
+    else:
+        def bar(depth, phase):
+            return headline
+    return (bar,
             "%s, measured %s: %s"
             % (os.path.relpath(ERROR_BAR_FILE, WORKSPACE).replace("\\", "/"),
                data.get("measured", "date not recorded"),
@@ -256,39 +272,31 @@ def compare_depth(depth, a_rows, b_rows, bar):
     print("")
     print("depth %d -- A %d records, B %d records"
           % (depth, len(a_rows), len(b_rows)))
-    print("  %-6s %12s %12s %12s %9s   %s"
-          % ("phase", "A median", "B median", "delta ms", "delta %", "verdict"))
+    print("  %-6s %12s %12s %12s %9s   %-7s %s"
+          % ("phase", "A median", "B median", "delta ms", "delta %", "bar", "verdict"))
 
-    for key in COMPARE_ROWS:
-        a = pct([r[key] for r in a_rows], 50)
-        b = pct([r[key] for r in b_rows], 50)
+    def row(key, a, b):
         delta = a - b
         dpct = (100.0 * delta / b) if b else 0.0
-
-        if bar is None:
-            verdict = "no error bar recorded"
-        elif abs(dpct) <= bar:
-            verdict = "not distinguishable"
-        elif delta < 0:
-            verdict = "A FASTER"
+        limit = bar(depth, key) if bar is not None else None
+        if limit is None:
+            verdict, shown = "no error bar recorded", "--"
+        # 1e-6: the bar is computed in ms and this delta in us, so the extreme pair that
+        # DEFINES a bar lands on it give or take a float. On the bar is inside it.
+        elif abs(dpct) <= limit + 1e-6:
+            verdict, shown = "not distinguishable", "%.1f%%" % limit
         else:
-            verdict = "A SLOWER"
+            verdict = "A FASTER" if delta < 0 else "A SLOWER"
+            shown = "%.1f%%" % limit
+        print("  %-6s %12.2f %12.2f %+12.2f %+8.1f%%   %-7s %s"
+              % (key, ms(a), ms(b), ms(delta), dpct, shown, verdict))
 
-        print("  %-6s %12.2f %12.2f %+12.2f %+8.1f%%   %s"
-              % (key, ms(a), ms(b), ms(delta), dpct, verdict))
+    for key in COMPARE_ROWS:
+        row(key, pct([r[key] for r in a_rows], 50), pct([r[key] for r in b_rows], 50))
 
-    a_sw = pct([sum(r[k] for k in LEAVES) for r in a_rows], 50)
-    b_sw = pct([sum(r[k] for k in LEAVES) for r in b_rows], 50)
-    d_sw = a_sw - b_sw
-    p_sw = (100.0 * d_sw / b_sw) if b_sw else 0.0
-    if bar is None:
-        verdict = "no error bar recorded"
-    elif abs(p_sw) <= bar:
-        verdict = "not distinguishable"
-    else:
-        verdict = "A FASTER" if d_sw < 0 else "A SLOWER"
-    print("  %-6s %12.2f %12.2f %+12.2f %+8.1f%%   %s"
-          % ("SWEEPS", ms(a_sw), ms(b_sw), ms(d_sw), p_sw, verdict))
+    row("SWEEPS",
+        pct([sum(r[k] for k in LEAVES) for r in a_rows], 50),
+        pct([sum(r[k] for k in LEAVES) for r in b_rows], 50))
 
 
 def compare(a_arg, b_arg, bar_override):
@@ -320,8 +328,8 @@ def compare(a_arg, b_arg, bar_override):
         print("  until it exists no delta below it can be told from where .text happened")
         print("  to land, and every verdict below says so.")
     else:
-        print("  error bar: +/- %.1f %% of the dungeon median (%s)" % (bar, provenance))
-        print("  A delta inside it is NOT A RESULT. Write it down as not distinguishable.")
+        print("  error bar: PER DEPTH AND PER PHASE, the `bar` column (%s)" % provenance)
+        print("  A delta inside its row's bar is NOT A RESULT. Write it down as not distinguishable.")
 
     a_by, b_by = by_depth(a_rec), by_depth(b_rec)
     for depth in sorted(set(a_by) & set(b_by)):

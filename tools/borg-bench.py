@@ -544,45 +544,106 @@ def one_round(build_dir, tag, limit, compare_to, rebuild_host, do_precheck):
 # ------------------------------------------------------------------------------------
 # The sweep, and the error bar it exists to produce.
 
+PHASES = ["tot", "was", "lit", "upd", "fgn", "mkn", "scn", "trp", "mon", "wld", "SWEEPS"]
+TL_FIELDS = ["n", "turn", "d", "tot", "was", "lit", "upd", "fgn", "mkn", "scn", "trp",
+             "mon", "wld", "gen", "frm", "idle", "brk"]
+TL_LEAVES = ["was", "lit", "upd", "fgn", "mkn", "scn", "trp"]
+
+
+def phase_medians(tag):
+    """{depth: {phase: nearest-rank median in ms}} for one round's reduced capture."""
+    rows = {}
+    for line in io.open(os.path.join(BENCH, tag + ".txt"), encoding="utf-8", errors="replace"):
+        parts = line.split()
+        if not line.startswith("TL ") or len(parts) != len(TL_FIELDS) + 1:
+            continue
+        rec = dict(zip(TL_FIELDS, map(int, parts[1:])))
+        rec["SWEEPS"] = sum(rec[k] for k in TL_LEAVES)
+        rows.setdefault(rec["d"], []).append(rec)
+
+    def med(v):
+        s = sorted(v)
+        k = max(0, min(len(s) - 1, int(round(0.5 * len(s) + 0.5)) - 1))
+        return s[k] / 1000.0
+
+    return {d: {k: med([r[k] for r in rs]) for k in PHASES} for d, rs in rows.items()}
+
+
 def write_error_bar(metas):
-    """The spread of the dungeon medians IS the error bar on every flash-resident
-    measurement in this project. It goes in specifications.md 12 as such, and
-    turnlog.py --compare marks anything inside it as not distinguishable.
+    """The spread of the medians across the placements IS the error bar on every
+    flash-resident measurement in this project -- PER DEPTH AND PER PHASE.
 
-    Expressed as a percentage of the SMALLEST median, which is the conservative reading:
-    it is the largest number the same source at a different .text address was seen to
-    differ by, and a round claiming less than it has not demonstrated anything.
+    THE FIRST VERSION OF THIS FUNCTION WROTE ONE NUMBER, AND THE SWEEP SHOWED WHY THAT IS
+    WRONG (2026-09-13). Depth-1 `tot` spread 2.30 % across the four pads, but only because
+    the phases moved in opposite directions and cancelled: `lit` fell 6.8 %, `upd` rose
+    5.5 %, `mkn` moved 21 %, and in the town `lit` rose 47 % at one placement. A single
+    2.3 % applied to every row would have called a 5 % `lit` edit a win that placement alone
+    can produce. So every (depth, phase) gets its own bar, and turnlog.py --compare uses the
+    bar for the row it is judging.
+
+    Each bar is the spread as a percentage of the SMALLEST median, which is the conservative
+    reading: the largest amount the same source at a different .text address was seen to
+    differ by. `pct` keeps the depth-1 `tot` figure as the headline.
+
+    PASS THE REPEAT RUNS TOO, NOT ONLY ONE ROUND PER PAD. A bar from four placements alone
+    does not contain run-to-run noise on the small phases: the town's `trp` is 5 ms over
+    107 records, spread 3.9 % across the four pads and 6.2 % between two runs of ONE
+    binary. The bar is the spread over every round given, so it bounds placement and
+    repetition together:
+
+        borg-bench.py --error-bar-from s065-r1 s065-r2 s065-pad0 s065-pad2k s065-pad4k s065-pad6k
     """
-    vals = [m["dungeon_median_ms"] for m in metas if m.get("dungeon_median_ms")]
-    if len(vals) < 2:
-        raise Refusal("an error bar needs at least two placements; got %d" % len(vals))
+    if len(metas) < 2:
+        raise Refusal("an error bar needs at least two placements; got %d" % len(metas))
 
+    per_leg = {m["tag"]: phase_medians(m["tag"]) for m in metas}
+    depths = sorted(set.intersection(*[set(v) for v in per_leg.values()]))
+
+    bars = {}
+    for d in depths:
+        bars[str(d)] = {}
+        for k in PHASES:
+            vals = [per_leg[t][d][k] for t in per_leg]
+            lo, hi = min(vals), max(vals)
+            # Unrounded: a stored 5.54 against a measured 5.5406 marked the very leg that
+            # defines the bar as outside it.
+            bars[str(d)][k] = (100.0 * (hi - lo) / lo) if lo else None
+
+    vals = [per_leg[t][1]["tot"] for t in per_leg if 1 in per_leg[t]]
     lo, hi = min(vals), max(vals)
     pct = 100.0 * (hi - lo) / lo
 
     data = {
-        "pct": round(pct, 2),
+        "pct": pct,
+        "bars": bars,
         "measured": time.strftime("%Y-%m-%d"),
-        "note": ("spread of the depth-1 turn medians across %d .text placements of one "
-                 "source, %.2f..%.2f ms" % (len(vals), lo, hi)),
+        "note": ("spread of the medians across %d .text placements of one source; the "
+                 "headline is depth-1 tot, %.2f..%.2f ms, and every (depth, phase) has its "
+                 "own bar in `bars`" % (len(metas), lo, hi)),
         "legs": [{"tag": m["tag"], "pad": m["pad"],
-                  "text": (m["sizes"] or {}).get("text"),
-                  "bss": (m["sizes"] or {}).get("bss"),
-                  "town_median_ms": m["town_median_ms"],
-                  "dungeon_median_ms": m["dungeon_median_ms"]} for m in metas],
+                  "text": (m.get("sizes") or {}).get("text"),
+                  "bss": (m.get("sizes") or {}).get("bss"),
+                  "medians": {str(d): per_leg[m["tag"]][d] for d in depths}}
+                 for m in metas],
     }
     with io.open(ERROR_BAR_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, sort_keys=True)
 
-    rule("THE PLACEMENT ERROR BAR")
-    say("depth-1 medians: " + ", ".join("%s %.2f ms" % (m["tag"], m["dungeon_median_ms"])
-                                        for m in metas if m.get("dungeon_median_ms")))
-    say("spread %.2f ms on %.2f ms = %.2f %%" % (hi - lo, lo, pct))
+    rule("THE PLACEMENT ERROR BAR, PER DEPTH AND PER PHASE")
+    for d in depths:
+        say("")
+        say("depth %d  %s" % (d, "  ".join("%9s" % m["tag"] for m in metas)) + "     bar")
+        for k in PHASES:
+            say("  %-6s %s   %6.2f %%"
+                % (k, "  ".join("%9.2f" % per_leg[m["tag"]][d][k] for m in metas),
+                   bars[str(d)][k] or 0.0))
     say("")
-    say("This is the error bar on every flash-resident measurement in this project. A")
-    say("round whose delta is inside it has NOT demonstrated anything -- it has measured")
-    say("where .text happened to land. Code in SRAM has no placement sensitivity at all,")
-    say("which is the strongest argument there is for stage 070 item 3.")
+    say("headline: depth-1 tot spread %.2f ms on %.2f ms = %.2f %%" % (hi - lo, lo, pct))
+    say("")
+    say("A round whose delta on a phase is inside THAT PHASE'S bar has NOT demonstrated")
+    say("anything -- it has measured where .text happened to land. Code in SRAM has no")
+    say("placement sensitivity at all, which is the strongest argument there is for stage")
+    say("070 item 3.")
     say("")
     say("borg-bench: wrote %s" % os.path.relpath(ERROR_BAR_FILE, WS))
     return data
