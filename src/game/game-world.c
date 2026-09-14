@@ -694,6 +694,14 @@ void process_world(struct chunk *c)
 
 	/* Decrease trap timeouts */
 	TURNLOG_MARK(tl_traps);			/* PORT: stage 070, sweep 7 */
+	/*
+	 * PORT: stage 075 item 4. Skipped while c->timed_traps is zero, and recounted as it
+	 * walks: every trap with a non-zero timeout either passed through
+	 * square_set_trap_timeout(), which bumps the bound, or is in a chunk cave_new() made
+	 * with the bound at 1. See cave.h and PORT-NOTES.md 7.
+	 */
+	if (c->timed_traps > 0) {
+	int timed = 0;
 	for (y = 0; y < c->height; y++) {
 		for (x = 0; x < c->width; x++) {
 			struct loc grid = loc(x, y);
@@ -704,6 +712,8 @@ void process_world(struct chunk *c)
 					trap->timeout--;
 					if (!trap->timeout) {
 						changed = true;
+					} else {
+						timed++;	/* PORT: stage 075 item 4 */
 					}
 				}
 				trap = trap->next;
@@ -713,6 +723,8 @@ void process_world(struct chunk *c)
 				square_light_spot(c, grid);
 			}
 		}
+	}
+	c->timed_traps = timed;		/* PORT: stage 075 item 4 */
 	}
 	TURNLOG_ACC(TURNLOG_TRAPS, tl_traps);	/* PORT: stage 070 */
 

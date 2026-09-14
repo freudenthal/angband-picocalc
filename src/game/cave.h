@@ -231,6 +231,17 @@ struct chunk {
 	bool view_valid;
 	struct loc view_min;
 	struct loc view_max;
+
+	/*
+	 * PORT: angband-picocalc stage 075 item 4, 2026-09-13. An UPPER BOUND on the traps in
+	 * this chunk with a non-zero timeout -- not a count. cave_new() sets it to 1, so a new,
+	 * loaded or copied chunk is swept once; square_set_trap_timeout() adds 1 whenever it
+	 * sets a non-zero time; process_world()'s trap sweep runs only while it is non-zero and
+	 * sets it to the number of traps still timed after the decrement. A trap freed while
+	 * timed costs one extra sweep, never a missed one. Not saved: load.c builds a fresh
+	 * chunk. See PORT-NOTES.md 7.
+	 */
+	int timed_traps;
 };
 
 /*** Feature Indexes (see "lib/gamedata/terrain.txt") ***/

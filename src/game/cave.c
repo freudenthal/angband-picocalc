@@ -371,6 +371,7 @@ struct chunk *cave_new(int height, int width) {
 								   sizeof(struct monster_group*));
 
 	c->turn = turn;
+	c->timed_traps = 1;	/* PORT: stage 075 item 4 -- sweep a new chunk once */
 	return c;
 }
 

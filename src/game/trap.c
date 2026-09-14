@@ -646,6 +646,7 @@ bool square_set_trap_timeout(struct chunk *c, struct loc grid, bool domsg,
 
 		/* Set the timer */
 		current_trap->timeout = time;
+		if (time) c->timed_traps++;	/* PORT: stage 075 item 4 -- the chunk given, not cave */
 		disabled = true;
 
 		/* Message if requested */
