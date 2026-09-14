@@ -101,6 +101,8 @@ SWEEP_TREES = [
 BOOT_MARK = re.compile(r"on the PicoCalc -- stage 050 bring-up")
 SAVE_RESTORE = re.compile(r"save-restore: (\w+)[^0-9]*(\d+) B in (\d+) ms")
 INIT_TOOK = re.compile(r"init_angband\(\) took (\d+) ms")
+LEADING_SYNC = re.compile(r"^SYNC 1 y=\S+ x=\S+ chp=\S+ au=\S+ dl=\S+ t=\S+ "
+                          r"si=(?P<si>\d+) rv=\S+ rs=(?P<rs>[0-9a-f]+) d=\S+", re.M)
 HOST_SAVED_RS = re.compile(r"rng: playing\s+si=(\d+)\s+rs=([0-9a-f]+)\s+\(saved\)")
 
 
@@ -306,18 +308,21 @@ def flash_and_boot(uf2, capture):
 def check_boot(capture, saved):
     """The assertion that item 1 is working, before a single key of the keystream.
 
-    THE PLAN ASKED FOR THIS AGAINST A LEADING SYNC RECORD AND THERE ISN'T ONE. A SYNC
-    record is emitted once per COMPLETED PLAYER COMMAND (src/platform/main-pico.c's
-    sync_end(), called from ui-game.c's play_game loop), and sessions/angband-bench.txt
-    deliberately completes no command -- both of its keys are Escapes, because a key that
-    completed one would put the device a record ahead of the host for the rest of the run.
-    So there is nothing at boot holding the savefile's RNG state.
+    TWO CHECKS, THE MECHANISM AND ITS RESULT.
 
-    What there is instead is better, because it checks the mechanism rather than its
-    consequence: the device's own `save-restore:` line, which says the copy happened and
-    how many bytes it moved. The consequence is then checked one key later and for free --
-    if the card were not at the savefile's state, lockstep diverges at command 1, which is
-    the refusal below.
+    1. The device's own `save-restore: copied N B in M ms` line, with N checked against
+       HARNESS.master's size. That says the copy happened.
+    2. THE LEADING SYNC RECORD, whose si=/rs= must equal the host's
+       `rng: playing ... (saved)` figure. That says the game the device loaded is at the
+       state the host's game was at. The first play_game() pass after the savefile loads
+       emits a record with no key sent -- `SYNC 1 ... dl=0 t=1 si=19 rs=853891f9` --
+       and sessions/angband-bench.txt waits for it by name.
+
+    An earlier version of this function said that record did not exist, and the first
+    device round (s065-r1, 2026-09-13) proved otherwise the expensive way: the record
+    arrived after lockstep had started, was paired with the host's record 1, and was
+    reported as a divergence at command 1 while the device's record 2 matched the host's
+    record 1 byte for byte.
     """
     rule("BOOT CHECK: did the savefile restore itself? (stage 065 item 1)")
     text = slice_last_boot(read_text(capture))
@@ -346,11 +351,27 @@ def check_boot(capture, saved):
         % (nbytes, took))
     if want is not None:
         say("save-restore: matches %s exactly (%d B)." % (os.path.basename(MASTER), want))
+    lead = LEADING_SYNC.search(text)
+    if not lead:
+        raise Refusal(
+            "no leading SYNC record in the boot slice. The first play_game() pass after the "
+            "savefile loads emits one with no key sent, and sessions/angband-bench.txt waits "
+            "for it by name -- so if it is missing, the script did not run to the end, and "
+            "if lockstep is started now it will pair that record with the host's record 1 "
+            "and call the round a divergence.")
+    say("leading record: %s" % lead.group(0).strip())
     if saved:
-        say("save-restore: the host loaded that file at si=%s rs=%s. Nothing at boot "
-            "carries an RNG state to compare it against -- the bench script completes no "
-            "command on purpose -- so the comparison is made one key later, by lockstep's "
-            "own record 1." % (saved["si"], saved["rs"]))
+        if lead.group("si") != saved["si"] or lead.group("rs") != saved["rs"]:
+            raise Refusal(
+                "the device loaded its savefile at si=%s rs=%s and the host loaded its copy at "
+                "si=%s rs=%s. They are not the same savefile, and every record after this one "
+                "would diverge for a reason that has nothing to do with the binary."
+                % (lead.group("si"), lead.group("rs"), saved["si"], saved["rs"]))
+        say("leading record: si=%s rs=%s EQUALS the host's saved state. The device starts "
+            "from the game the host played." % (saved["si"], saved["rs"]))
+    else:
+        say("leading record: no pre-check ran, so there is no host figure to compare it "
+            "with. Lockstep's record 1 is the only check this round has.")
 
     m = INIT_TOOK.search(text)
     if m:
