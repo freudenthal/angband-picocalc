@@ -93,7 +93,8 @@ At the next power-on the game starts without the menu.
 * **Screen:** 64 columns by 32 rows. The status panel is at the top of the screen
   (`SIDEBAR_TOP`), so the map uses all 64 columns.
 * **Battery:** the right end of the status row (row 5) shows `Bat 87%` on battery and
-  `Chg 87%` while charging. The colour is green at 50 % and above, yellow at 20-49 %, red
+  `Chg 87%` while charging. `Chg` means the battery takes charge, not that a cable is
+  connected: a full battery with the charger connected shows `Bat100%`. The colour is green at 50 % and above, yellow at 20-49 %, red
   below 20 %, and blue while charging. The game reads the charge every 30 seconds while it
   waits for a key. On a full status row, the field covers the end of the last status word.
 * **Low battery:** when the charge goes to 15 % or less, the game shows
