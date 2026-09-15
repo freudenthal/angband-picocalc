@@ -304,7 +304,13 @@ add_subdirectory("${PICO_VFS_DIR}" pico-vfs)
 # src/host/ is deliberately absent: upstream main.c and main-test.c are the WSL harness
 # only. tools/compile-sweep.sh compiles exactly this set outside CMake and is part 1 of
 # the project's regression suite.
+# Stage 110: file(GLOB) does not guarantee an order, and this checkout's directory-entry
+# order (built up over many stages) differs from a fresh git checkout's -- which linked a
+# byte-different (same-size) .text from the identical source set, only in a different
+# order. list(SORT) makes the link order, and so the binary, independent of how the
+# directory was populated.
 file(GLOB ANGBAND_GAME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/game/*.c")
+list(SORT ANGBAND_GAME_SOURCES)
 
 add_library(angband_core OBJECT ${ANGBAND_GAME_SOURCES})
 
