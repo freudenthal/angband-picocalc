@@ -40,7 +40,12 @@ command -v "$CC" > /dev/null || { echo "compile-sweep: $CC not found after sourc
 # -fsigned-char: harness stage 055 pins char signedness across the device build
 # (CMakeLists.txt), the host build (host-build.sh) and this sweep, so all three compile
 # src/game/ with the same semantics. ARM GCC defaults to unsigned, x86-64 GCC to signed.
-FLAGS=(-mcpu=cortex-m33 -mthumb -Os -ffunction-sections -fdata-sections -std=gnu99 -fsigned-char -DPICOCALC -Wall -c)
+#
+# -ffile-prefix-map (stage 110): CMakeLists.txt's comment on the same flag explains why --
+# upstream Angband embeds __FILE__ at runtime (obj-pile.c), so the compiled bytes otherwise
+# depend on where this tree was checked out. $PORT is this repository's own root, matching
+# the map CMakeLists.txt applies from CMAKE_CURRENT_SOURCE_DIR.
+FLAGS=(-mcpu=cortex-m33 -mthumb -Os -ffunction-sections -fdata-sections -std=gnu99 -fsigned-char "-ffile-prefix-map=$PORT=angband-pico" -DPICOCALC -Wall -c)
 INCLUDES=(-I "$PICO_VFS/include" -I "$PORT/src/game" -I "$PORT/src/platform")
 
 OUT="$PORT/build-sweep"

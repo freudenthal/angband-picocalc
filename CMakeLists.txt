@@ -269,6 +269,29 @@ set(PICO_BOARD pimoroni_pico_plus2_w_rp2350 CACHE STRING "Board type")
 # tools/compile-sweep.sh and tools/host-build.sh carry the same flag; all three are edited
 # together or none is. The .text movement this caused on the shipped build is recorded in
 # specifications.md 10.
+# Stage 110. THE CHECKOUT'S ABSOLUTE PATH MUST NOT REACH THE BINARY.
+#
+# Upstream Angband calls its own integrity check with __FILE__ (obj-pile.c's
+# pile_integrity_fail(), unrelated to assert() and not disabled by -DNDEBUG), and the SDK's
+# own panic()/hard_assert() macros do the same. __FILE__ expands to whatever path the
+# compiler was invoked with, which is CMAKE_CURRENT_SOURCE_DIR-derived and therefore
+# different for every checkout location -- so two clones of an IDENTICAL commit, built the
+# same way, linked a byte-different .text (same size, different content) because a handful
+# of these strings differ in length and shift the addresses of everything placed after them
+# in the SRAM-resident objects (ANGBAND_SRAM_OBJECTS' .rodata is excluded into .data beside
+# their .text, and flash .text that loads a shifted SRAM address literally encodes a
+# different constant). Found and proven with two builds of this exact commit, one from
+# angband-pico/ and one from a fresh clone: identical symbol names and addresses in .text,
+# but the raw bytes differed from the first byte, and a string search of the .data section
+# turned up the compiler-invocation path verbatim.
+#
+# -ffile-prefix-map rewrites the FROM prefix (this build's own CMAKE_CURRENT_SOURCE_DIR,
+# whatever it is) to a fixed relative token in both __FILE__ and debug info, so the
+# EXPANSION is the same regardless of where the repository was checked out. Placed beside
+# -fsigned-char for the same reason: add_compile_options(), before pico_sdk_init() and
+# add_subdirectory(pico-vfs), so it reaches every translation unit including the SDK's own.
+add_compile_options(-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=angband-pico)
+
 add_compile_options(-fsigned-char)
 
 include(pico_sdk_import.cmake)
