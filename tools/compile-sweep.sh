@@ -28,9 +28,14 @@ PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS="$(cd "$PORT/.." && pwd)"
 PICO_VFS="${PICO_VFS_DIR:-$PORT/external/pico-vfs}"
 
-# Build tools are not on the system PATH on this machine.
-# shellcheck source=/dev/null
-source "$WS/tools/pico-env.sh" > /dev/null
+# tools/pico-env.sh is a convenience of the development workspace this port was built in --
+# it puts the ARM toolchain on PATH -- and is not part of this repository. Source it if it
+# happens to be there (a sibling checkout of the workspace); otherwise assume the caller
+# already has arm-none-eabi-gcc on PATH and let the check below say so if not.
+if [ -f "$WS/tools/pico-env.sh" ]; then
+	# shellcheck source=/dev/null
+	source "$WS/tools/pico-env.sh" > /dev/null
+fi
 
 CC=arm-none-eabi-gcc
 
