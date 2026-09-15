@@ -13,7 +13,7 @@
 //
 // A core source includes this file (src/game/ui-display.c, under PICOCALC), and
 // tools/compile-sweep.sh compiles src/game/ with no SDK include path -- the turnlog.h rule.
-// So nothing from the SDK is here: <stdbool.h> and <stdint.h> only. The decode, the colour
+// So nothing from the SDK is here: <stdbool.h>, <stdint.h> and <wchar.h> only. The decode, the colour
 // level and the warning state machine are static inline functions over plain values, which
 // does two things. tools/battery-test.c checks them on the host with no stubs. And
 // ui-display.c, which runs from SRAM, reads the last register byte out of .bss without a
@@ -27,6 +27,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <wchar.h>
 
 /** Seconds between two register reads. The MCU refreshes the register every 20 s. */
 #define BATTERY_POLL_SECONDS    30
@@ -81,6 +82,23 @@ static inline bool battery_changed(void)
 
 	battery_dirty = false;
 	return was;
+}
+
+/**
+ * The field's BATTERY_FIELD_COLS wide characters, not terminated: "Bat 87%", "Chg100%",
+ * "Bat  5%". Built by hand rather than formatted, so ui-display.c can put it straight into
+ * the term with Term_addch() and never reach the flash-resident text conversion that
+ * Term_putstr() uses. `percent` is 0..100, as battery_decode() gives it.
+ */
+static inline void battery_field(wchar_t *out, int percent, bool charging)
+{
+	out[0] = charging ? L'C' : L'B';
+	out[1] = charging ? L'h' : L'a';
+	out[2] = charging ? L'g' : L't';
+	out[3] = (percent >= 100) ? L'1' : L' ';
+	out[4] = (percent >= 10) ? (wchar_t)(L'0' + (percent / 10) % 10) : L' ';
+	out[5] = (wchar_t)(L'0' + percent % 10);
+	out[6] = L'%';
 }
 
 /** How the field is coloured. ui-display.c maps these onto COLOUR_*. */

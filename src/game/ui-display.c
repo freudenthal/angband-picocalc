@@ -1364,6 +1364,12 @@ static void update_statusline_aux(int row, int col)
  * word sometimes is, and the player can read that word again next turn. Nothing is drawn
  * when there is no reading (battery.h). The reading is a byte in .bss; this function runs
  * from SRAM with the rest of ui-display.c and makes no call into flash to get it.
+ *
+ * The seven cells go in by Term_addch() as wide characters, built by hand, NOT by
+ * strnfmt() and c_put_str(). Term_putstr() converts its string through text_mbcs_hook,
+ * which is utf8.c and runs from flash, between writes to the term's cells in PSRAM: the
+ * QMI alternation of specifications.md 6.4. Run 1's c_put_str() version measured +2.05 ms
+ * of `rdr` at depth 1 on the bench (round s100-bat against s100-base).
  */
 static void prt_battery(int row)
 {
@@ -1373,15 +1379,17 @@ static void prt_battery(int row)
 		COLOUR_YELLOW,	/* BATTERY_LEVEL_LOW */
 		COLOUR_L_RED	/* BATTERY_LEVEL_CRITICAL */
 	};
-	char field[BATTERY_FIELD_COLS + 1];
-	int percent;
+	wchar_t field[BATTERY_FIELD_COLS];
+	int percent, attr, i;
 	bool charging;
 
 	if (!battery_read(&percent, &charging)) return;
 
-	strnfmt(field, sizeof(field), "%s%3d%%", charging ? "Chg" : "Bat", percent);
-	c_put_str(level_colour[battery_level(percent, charging)], field, row,
-		Term->wid - BATTERY_FIELD_COLS);
+	battery_field(field, percent, charging);
+	attr = level_colour[battery_level(percent, charging)];
+	if (Term_gotoxy(Term->wid - BATTERY_FIELD_COLS, row)) return;
+	for (i = 0; i < BATTERY_FIELD_COLS; i++)
+		Term_addch(attr, field[i]);
 }
 #endif
 

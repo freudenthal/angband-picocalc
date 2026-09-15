@@ -48,7 +48,7 @@ static void ck_warn(struct battery_warn *w, int pct, bool chg, int want, const c
 int main(void)
 {
 	struct battery_warn w;
-	char field[BATTERY_FIELD_COLS + 8];
+	wchar_t field_w[BATTERY_FIELD_COLS];
 	int pct;
 	bool chg;
 
@@ -81,16 +81,35 @@ int main(void)
 	ck(battery_level(5, true) == BATTERY_LEVEL_CHARGING, "level 5 charging is charging");
 	ck(battery_level(100, true) == BATTERY_LEVEL_CHARGING, "level 100 charging is charging");
 
-	/* The field is exactly BATTERY_FIELD_COLS wide at every charge (ui-display.c's format). */
+	/*
+	 * battery_field(), the builder ui-display.c draws from, against printf's "%s%3d%%" at every
+	 * charge and both states -- the format run 1 drew with before it was taken off the flash
+	 * text path.
+	 */
 	{
 		int bad = 0;
 		for (int p = 0; p <= 100; p++) {
-			snprintf(field, sizeof(field), "%s%3d%%", (p & 1) ? "Chg" : "Bat", p);
-			if (strlen(field) != BATTERY_FIELD_COLS) bad++;
+			for (int c = 0; c <= 1; c++) {
+				wchar_t w[BATTERY_FIELD_COLS];
+				char want[BATTERY_FIELD_COLS + 8];
+				int i;
+
+				snprintf(want, sizeof(want), "%s%3d%%", c ? "Chg" : "Bat", p);
+				battery_field(w, p, c);
+				if (strlen(want) != BATTERY_FIELD_COLS) bad++;
+				for (i = 0; i < BATTERY_FIELD_COLS; i++)
+					if (w[i] != (wchar_t)(unsigned char)want[i]) bad++;
+			}
 		}
-		ck(bad == 0, "field is 7 columns for 0..100");
-		snprintf(field, sizeof(field), "%s%3d%%", "Bat", 87);
-		ck(strcmp(field, "Bat 87%") == 0, "field reads \"Bat 87%\"");
+		ck(bad == 0, "field matches \"%s%3d%%\" for 0..100, both states");
+		battery_field(field_w, 87, false);
+		ck(field_w[0] == L'B' && field_w[3] == L' ' && field_w[4] == L'8' && field_w[5] == L'7'
+			&& field_w[6] == L'%', "field reads \"Bat 87%\"");
+		battery_field(field_w, 100, true);
+		ck(field_w[0] == L'C' && field_w[3] == L'1' && field_w[4] == L'0' && field_w[5] == L'0',
+			"field reads \"Chg100%\"");
+		battery_field(field_w, 5, false);
+		ck(field_w[3] == L' ' && field_w[4] == L' ' && field_w[5] == L'5', "field reads \"Bat  5%\"");
 	}
 
 	/* The warnings: one per crossing, re-armed above 20 % or on charging. */
