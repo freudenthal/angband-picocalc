@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The suite, part 4, for angband-picocalc (stage 060).
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/screen-sweep.sh
+#   cd <workspace root> && angband-pico/tools/screen-sweep.sh
 #
 # Runs tools/screens.in through build-host/angband-test twice -- once at 80x32 and once at
 # 64x32 -- and writes one capture file per width under build-host/screens/. Then, for every

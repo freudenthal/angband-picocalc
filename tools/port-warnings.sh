@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The suite, part 5, for angband-picocalc (stage 060).
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh \
+#   cd <workspace root> && source tools/pico-env.sh \
 #     && angband-pico/tools/port-warnings.sh
 #
 # compile-sweep.sh only sweeps src/game/, so the port's own sources are not covered by it

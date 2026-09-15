@@ -2,6 +2,9 @@
 # PORT: port-written for angband-pico, stage 070. Save the board's serial output to a file
 # while it is happening.
 #
+# NOT PART OF THE RELEASE. A device-side debugging aid for the development workspace; it is
+# not needed to build or play the game.
+#
 #   python angband-pico/tools/serial-capture.py                 # auto-find the port
 #   python angband-pico/tools/serial-capture.py COM7 run1.txt
 #

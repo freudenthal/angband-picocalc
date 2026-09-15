@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # PORT: port-written for angband-pico, picocalc-device-harness stage 055.
 #
+# NOT PART OF THE RELEASE. This is a desk-side pre-check for the development workspace's
+# harness project; it does not need the device, but it is not needed to build or play the
+# game either.
+#
 # Drive build-host-borg/angband-borg from Git Bash. It is a WSL binary, so every invocation
 # has to cross into WSL and every path has to be a /mnt/c one; this script is that wrapper
 # and nothing else.

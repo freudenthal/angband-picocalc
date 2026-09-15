@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 # PORT: port-written for angband-pico, stage 065. ONE OPTIMISATION ROUND, END TO END.
 #
+# NOT PART OF THE RELEASE. This needs the development workspace's picocalc-device-harness
+# (tools/harness/ at the workspace root, a sibling of this repository) and its own
+# .llm/scratch/ capture convention; it does not run against a standalone clone.
+#
 #   "C:\Program Files\Python312\python.exe" angband-pico/tools/borg-bench.py \
 #       build-pico2-bench <tag> [--compare-to <tag>] [--limit 250]
 #

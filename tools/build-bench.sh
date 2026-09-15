@@ -9,7 +9,9 @@
 # console ON (stage 090), keys ON, SYNC ON, turn log ON, save-restore ON, mirror OFF.
 set -e
 
-cd /c/Users/greenblob/Documents/PicoCalc
+PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WS="$(cd "$PORT/.." && pwd)"
+cd "$WS"
 source tools/pico-env.sh
 
 SDK="$(cygpath -m "$PWD/micropython/lib/pico-sdk")"

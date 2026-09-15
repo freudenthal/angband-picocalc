@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 # PORT: port-written for angband-pico, stage 070 item 3. PROVE A PLACEMENT, PER FILE.
 #
+# NOT PART OF THE RELEASE. A desk-side check for the SRAM-placement optimisation work in the
+# development workspace; it is not needed to build or play the game.
+#
 #   "C:\Program Files\Python312\python.exe" angband-pico/tools/sram-check.py <build-tree>
 #
 # Reads ANGBAND_SRAM_OBJECTS out of CMakeLists.txt, lists every defined function and

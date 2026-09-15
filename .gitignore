@@ -1,2 +1,8 @@
 build*/
 vendor-tmp/
+tests/**/run.out
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.swp

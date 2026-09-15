@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 080: put the release build and the lib tree into sdcard-pico2/, and prove it.
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/stage-card.sh [--card E:]
+#   cd <workspace root> && angband-pico/tools/stage-card.sh [--card E:]
 #
 # Writes (and replaces) only these two things in sdcard-pico2/:
 #   pico2-apps/angband.uf2      from angband-pico/build-pico2/angband.uf2 (the shipped build)

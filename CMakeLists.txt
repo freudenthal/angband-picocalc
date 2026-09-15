@@ -9,16 +9,19 @@
 #   angband_termdiag    stage 040. Terminal front end diagnostic.
 #   angband             stage 050. The game.
 #
-# This project builds against pico-sdk 2.3.0 (micropython/lib/pico-sdk), not the workspace
-# 2.2.0, because 2.3.0 carries hardware_psram and the PSRAM linker region. Configure with:
+# This project builds against pico-sdk 2.3.0, not an older workspace SDK, because 2.3.0
+# carries hardware_psram and the PSRAM linker region. Configure from this directory with:
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh
-#   cmake -G Ninja -B angband-pico/build-pico2 -S angband-pico \
-#     -DPICO_SDK_PATH="$(cygpath -m "$PWD/micropython/lib/pico-sdk")" \
+#   git submodule update --init --recursive
+#   cmake -G Ninja -B build-pico2 -S . \
+#     -DPICO_SDK_PATH=<path to pico-sdk 2.3.0> \
 #     -DPICO_BOARD=pimoroni_pico_plus2_w_rp2350 -DPICO_PLATFORM=rp2350 \
-#     -Dpicotool_DIR="$(cygpath -m "$PWD/picotool/picotool-2.3.0/picotool")" \
+#     -Dpicotool_DIR=<path to picotool 2.3.0's picotool/ install dir> \
 #     -DCMAKE_EXE_LINKER_FLAGS="-Wl,--print-memory-usage"
-#   cmake --build angband-pico/build-pico2 --target angband_core
+#   cmake --build build-pico2 --target angband_core
+#
+# pico-vfs is a submodule at external/pico-vfs (PICO_VFS_DIR); see the pico-vfs section
+# below and BUILDING.md.
 
 cmake_minimum_required(VERSION 3.13)
 
@@ -278,14 +281,17 @@ pico_sdk_init()
 # it z-file.c does not compile: newlib's own <dirent.h> is a #error stub. Stage 020 needed
 # only the header; stage 030 builds the library too and mounts the card with it.
 #
-# PICOCALC_SD_BOOT_DIR is a cache variable so a different checkout can be pointed at without
-# editing this file, exactly as mothpad/c/pico/CMakeLists.txt does it.
-set(PICOCALC_SD_BOOT_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../PicoCalc/Code/pico_multi_booter/sd_boot"
-    CACHE PATH "Path to the ClockworkPi PicoCalc sd_boot sources, which carry pico-vfs")
-set(PICO_VFS_DIR "${PICOCALC_SD_BOOT_DIR}/lib/pico-vfs")
+# PICO_VFS_DIR is the cache variable users set. Its default, external/pico-vfs, is a git
+# submodule pinned to https://github.com/oyama/pico-vfs at 4b71f274 -- the same commit the
+# ClockworkPi PicoCalc firmware's sd_boot vendors (stage 110 proved the trees identical
+# apart from .git). Fetch it with `git submodule update --init --recursive` before
+# configuring; a build tree pointed at a different checkout still works by overriding the
+# cache variable.
+set(PICO_VFS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/pico-vfs" CACHE PATH
+    "Path to a pico-vfs checkout (default: the external/pico-vfs submodule)")
 if(NOT EXISTS "${PICO_VFS_DIR}/include/sys/dirent.h")
-    message(FATAL_ERROR "pico-vfs headers not found at ${PICO_VFS_DIR}/include")
+    message(FATAL_ERROR "pico-vfs headers not found at ${PICO_VFS_DIR}/include -- "
+        "run 'git submodule update --init --recursive' or set -DPICO_VFS_DIR=<path>")
 endif()
 
 # Brings in the blockdevice_*, filesystem_* and blockdevice/filesystem INTERFACE targets.

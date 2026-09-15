@@ -12,13 +12,13 @@ SD card. `PORT-NOTES.md` lists every change to an upstream file.
 Source the environment first. Nothing is on the system PATH.
 
 ```bash
-cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh
+cd <workspace root> && source tools/pico-env.sh
 cmake --build angband-pico/build-pico2 --target angband
 ```
 
 `build-pico2` is the release build: `MinSizeRel`, every `ANGBAND_*` option off. To configure
-it for the first time, use the command in `../.llm/projects/angband-picocalc/specifications.md`
-§10. It needs pico-sdk 2.3.0 and picotool 2.3.0.
+it for the first time, fetch the pico-vfs submodule and use the command at the top of
+`CMakeLists.txt`. It needs pico-sdk 2.3.0 and picotool 2.3.0.
 
 `ANGBAND_CONSOLE` is the developer console. It is off in the release build. When it is on,
 the game has USB and UART serial, waits up to 10 seconds for a USB terminal, and shows the

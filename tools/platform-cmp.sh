@@ -7,12 +7,21 @@
 # Source tree order matches specifications.md 4 (platform layer source): prefer
 # zangband-pico/ when the file exists there, else tinyrogue-pico/.
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/platform-cmp.sh
+#   cd <workspace root> && angband-pico/tools/platform-cmp.sh
 
 set -u
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 root=$(cd "$here/.." && pwd)
+
+# A standalone clone (no zangband-pico or tinyrogue-pico sibling checked out beside it)
+# has nothing to compare against. That is not a defect in the clone -- the platform files
+# are shipped in src/platform/ either way -- so the check is skipped rather than failed,
+# and the suite is not red by construction outside the development workspace.
+if [ ! -d "$root/zangband-pico" ] && [ ! -d "$root/tinyrogue-pico" ]; then
+    echo "platform-cmp: skipped: no sibling tree (zangband-pico or tinyrogue-pico) beside this checkout"
+    exit 0
+fi
 
 files="lcd.c lcd.h font5x10.c font5x10.h southbridge.c southbridge.h keyboard.c keyboard.h sd_fs.c sd_fs.h syscalls.c syscalls.h"
 

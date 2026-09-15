@@ -5,9 +5,9 @@ Angband for the ClockworkPi PicoCalc with a Pimoroni Pico Plus 2 W (RP2350B) fit
 **Keep this file current.** Every edit to a vendored file must appear under
 [PORT: edits](#port-edits) with its reason.
 
-Project documents live in `../.llm/projects/angband-picocalc/`: `readme.md` for purpose and
-principles, `specifications.md` for layout, systems, memory model and build commands,
-`todo.md` for the stage tracker.
+The design notes (purpose and principles, layout, systems, memory model, build commands, the
+stage tracker) are kept in the development workspace this port was built in, outside this
+repository, and are not needed to build or play it.
 
 ## Source
 
@@ -16,8 +16,8 @@ principles, `specifications.md` for layout, systems, memory model and build comm
 | Upstream | https://github.com/angband/angband |
 | Commit | `00c9414cb` — "Convert signal_count to a volatile sig_atomic_t", 2026-08-25 |
 | Relation to a release | 184 commits after tag `4.2.6` (2025-12-15); maintenance only, savefile-compatible |
-| Local clone | `../angband/`. **Never edited.** `git -C angband status --porcelain` must print nothing. |
-| Vendor commit here | `2cf1b4a` — "vendor: Angband 00c9414cb src/, lib/, tests/, licence (filtered, unedited)" |
+| Local clone | A sibling checkout of upstream at `../angband/` is the workspace's own convention for re-vendoring; it is not a requirement of this repository, which needs only the vendor commit below. **Never edited when present.** `git -C angband status --porcelain` must print nothing. |
+| Vendor commit here | `6a39955` — "vendor: Angband 00c9414cb src/, lib/, tests/, licence (filtered, unedited)" |
 
 Vendored with:
 
@@ -98,7 +98,7 @@ stage 055 (section 6). Stage 070 run 3 added `cave.h`, `cave.c` and `cave-square
 further hunks in `cave-view.c` and `game-world.c` (section 7) — **the first edits in this
 tree that change what the game computes**, each proved by the desk pre-check and a lockstep
 bench round. Each edit is wrapped in a `PORT:` banner; every hunk of
-`git diff 2cf1b4a HEAD -- src/game src/host` contains the string `PORT:`. **The 118 files of
+`git diff 6a39955 HEAD -- src/game src/host` contains the string `PORT:`. **The 118 files of
 `src/game/borg/` are not among them and must stay that way** — they were vendored unmodified
 and all 59 sources compiled clean against this core on the first attempt.
 
@@ -125,7 +125,7 @@ spread over 37 of the 150 core sources and no more than 40 B in any one of them.
 in this file measured before 2026-09-12 predates it.
 
 ```
-git diff --stat 2cf1b4a HEAD -- src/game src/host
+git diff --stat 6a39955 HEAD -- src/game src/host
 ```
 
 ### 1. `src/game/h-basic.h` — the `PICOCALC` platform macro
@@ -351,7 +351,7 @@ one, and compares the four flags on every grid and `light` on every grid of the 
 1,001 replayed commands: **1,649 calls, 1,609 of them bounded, 0 differing flags, 0
 differing light values.** The same harness with the lighting box deliberately shrunk by four
 grids reported 913 bad calls and 3,008 differing light values, so it can see a fault. The
-script is `.llm/scratch/s070r3/view-selftest.c`.
+script was kept outside this repository, not committed.
 
 **Stage 075, 2026-09-13.** Two more, each with the desk pre-check (1,001 records identical)
 and a bench round in lockstep.
@@ -369,8 +369,8 @@ writers of a trap's `timeout` (grep over `src/game/*.c`) are the sweep's own dec
 from `cave_new()`. Nothing the sweep itself calls (`square_memorize_traps()`,
 `square_light_spot()`) sets a timeout, so the recount cannot overwrite an increment made
 during the walk. A trap freed while timed leaves the bound high for one extra sweep, never
-low. **The self-test** (scaffold, not committed,
-`.llm/scratch/s075/trap-selftest-scaffold.py`): before each bounded sweep, walk every trap
+low. **The self-test** (scaffold, kept outside this repository, not committed):
+before each bounded sweep, walk every trap
 unconditionally and fail if any `timeout` is non-zero while the bound is zero. The borg
 replay never times a trap (876 sweeps, 850 skipped, none timed), so the scaffold also injects
 a 3-turn timeout through `square_set_trap_timeout()` on every 40th sweep: 13 injections,
@@ -415,9 +415,9 @@ branch, at most every 30 s. The warnings and the automatic save at 5 % are in `s
 ## The platform layer
 
 `src/platform/` is not vendored from Angband. It is the PicoCalc hardware layer, shared with
-the sibling ports (`../.llm/projects/angband-picocalc/specifications.md` §4, platform layer
-source: copy from `zangband-pico/` when the file exists there, else from `tinyrogue-pico/`;
-never write a second LCD driver).
+this port's sibling PicoCalc ports in the development workspace (platform layer source:
+copy from `zangband-pico/` when the file exists there, else from `tinyrogue-pico/`; never
+write a second LCD driver).
 
 | File | Origin | Stage |
 |---|---|---|
@@ -601,10 +601,11 @@ and which stays undefined here.
 
 ## Building
 
-See `../.llm/projects/angband-picocalc/specifications.md` §10. In short:
+See `README.md` (`BUILDING.md`, stage 120) for the full configure command. In short, from
+the workspace root that holds this checkout, pico-sdk 2.3.0 and picotool 2.3.0:
 
 ```
-cd /c/Users/greenblob/Documents/PicoCalc && source tools/pico-env.sh
+cd <workspace root> && source tools/pico-env.sh
 angband-pico/tools/compile-sweep.sh      # the suite, part 1: cross-compile sweep
 angband-pico/tools/host-build.sh         # the suite, part 2: WSL host build, tests, heap probe
 angband-pico/tools/platform-cmp.sh       # src/platform/ still byte-identical to its source tree

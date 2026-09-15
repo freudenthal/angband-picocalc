@@ -3,6 +3,10 @@
 # ANGBAND_TURN_LOG build and prints the table stage 070's item 2 asks for. Stage 065 added
 # --compare and the sparse-column report.
 #
+# NOT PART OF THE RELEASE. This needs a device capture and the development workspace's
+# .llm/scratch/ convention for storing bench tags; it does not run against a standalone
+# clone with no device.
+#
 #   python angband-pico/tools/turnlog.py capture.txt
 #   python angband-pico/tools/turnlog.py capture.txt --csv turns.csv
 #   python angband-pico/tools/turnlog.py --compare <tag-or-path> <tag-or-path>

@@ -26,7 +26,7 @@ set -u
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS="$(cd "$PORT/.." && pwd)"
-PICO_VFS="$WS/PicoCalc/Code/pico_multi_booter/sd_boot/lib/pico-vfs"
+PICO_VFS="${PICO_VFS_DIR:-$PORT/external/pico-vfs}"
 
 # Build tools are not on the system PATH on this machine.
 # shellcheck source=/dev/null

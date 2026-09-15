@@ -3,8 +3,8 @@
 #
 # Run from Git Bash on the Windows host:
 #
-#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/host-build.sh
-#   cd /c/Users/greenblob/Documents/PicoCalc && angband-pico/tools/host-build.sh --borg
+#   cd <workspace root> && angband-pico/tools/host-build.sh
+#   cd <workspace root> && angband-pico/tools/host-build.sh --borg
 #
 # It shells out to WSL, builds the vendored core natively with gcc, links it against the
 # vendored upstream main.c + main-test.c, runs the end-to-end tests under tests/, and then
