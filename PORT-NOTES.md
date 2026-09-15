@@ -49,7 +49,10 @@ made the class lookup fail. Every vendored file here is byte-identical to upstre
 | `lib/` | Game data. Goes on the SD card at `/angband/lib/`. |
 | `tests/` | Upstream end-to-end tests plus the top-level `run-tests` runner, moved to `tests/run-tests`. |
 | `tools/` | The suite, the heap probe, the screen sweep, `rewrap-help.py` and `stage-card.sh` (stage 080, the card staging). Port-written. |
-| `README.md` | Operator documentation: build, card, play, licence. Stage 080. |
+| `README.md` | The public front page: hardware, differences, install summary, play, limitations. Stage 120. |
+| `INSTALL.md` | For the player: the UF2 Loader, the card, update, new character, trouble. Stage 120. |
+| `BUILDING.md` | For the developer: toolchain, configure, release and console builds, flashing, the suite, `stage-card.sh`. Stage 120. |
+| `CHANGELOG.md` | One entry per release. Stage 120. |
 | `copying.txt` | Upstream `docs/copying.rst`, renamed. |
 | `build-sweep/`, `build-host/`, `build-pico2/` | Generated. Gitignored. |
 
@@ -601,8 +604,9 @@ and which stays undefined here.
 
 ## Building
 
-See `README.md` (`BUILDING.md`, stage 120) for the full configure command. In short, from
-the workspace root that holds this checkout, pico-sdk 2.3.0 and picotool 2.3.0:
+`BUILDING.md` is the procedure for a standalone clone: tools, configure, builds, flashing,
+the suite and the card staging. What follows is the same from the development workspace
+that holds this checkout, pico-sdk 2.3.0 and picotool 2.3.0:
 
 ```
 cd <workspace root> && source tools/pico-env.sh

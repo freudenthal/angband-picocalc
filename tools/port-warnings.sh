@@ -48,7 +48,10 @@ src/platform/syscalls.c
 src/platform/turnlog.c
 src/platform/battery.c"
 
-python - "$PORT" "$TREES" "$FILES" <<'PYEOF'
+# Stage 120: whichever Python 3 this machine has on PATH.
+PY="$(command -v python || command -v python3 || command -v py)"
+[ -n "$PY" ] || { echo "port-warnings: no python, python3 or py on PATH"; exit 2; }
+"$PY" - "$PORT" "$TREES" "$FILES" <<'PYEOF'
 import os, re, subprocess, sys
 
 port, trees, files = sys.argv[1], sys.argv[2].split(), sys.argv[3].split("\n")

@@ -18,7 +18,10 @@
 set -u
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WPORT="$(echo "$PORT" | sed 's|^/\([a-zA-Z]\)/|/mnt/\1/|')"
+# Stage 120: through cygpath first, so a checkout under a Git Bash mount such as /tmp (which
+# is not a /x/ drive path) still reaches WSL as /mnt/<drive>/...
+WPORT="$(cygpath -m -l "$PORT" 2>/dev/null || echo "$PORT")"
+WPORT="$(echo "$WPORT" | sed 's|^\([a-zA-Z]\):/|/mnt/\L\1/|; s|^/\([a-zA-Z]\)/|/mnt/\1/|')"
 
 echo "screen-sweep: port tree $PORT"
 
@@ -62,6 +65,9 @@ awk '
 ' "screens/80x32.txt"
 WSLEOF
 
+# Stage 120: this printed the $? of an echo and then exited 0, so a missing build-host or a
+# failed cd in WSL still reported "exit 0". The WSL script's own status is the result.
+rc=$?
 echo
-echo "screen-sweep: exit $?"
-exit 0
+echo "screen-sweep: exit $rc"
+exit $rc

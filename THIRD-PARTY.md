@@ -15,7 +15,7 @@ summary level; this file is the detail, built from the file headers in `src/plat
 | pico-vfs | `external/pico-vfs/` (git submodule) | `https://github.com/oyama/pico-vfs` at commit `4b71f274acae7de9a3696d3345992294fa9e034e`. Pin proven (stage 110) against the ClockworkPi PicoCalc firmware's own vendored copy at `PicoCalc/Code/pico_multi_booter/sd_boot/lib/pico-vfs`: `diff -rq` between the two trees prints only `.git` entries. | BSD-3-Clause (Hiroyuki Oyama) | Not vendored and not modified; a submodule, built from its own sources at configure time. |
 | pico-vfs's FatFs (ff15) | `external/pico-vfs/vendor/ff15/` (inside the pico-vfs submodule) | `http://elm-chan.org/fsw/ff/` (ChaN), vendored by pico-vfs itself | BSD-2-Clause (ChaN) | Not modified by this repository. |
 | pico-vfs's littlefs | `external/pico-vfs/vendor/littlefs/` (nested git submodule, inside pico-vfs) | `https://github.com/littlefs-project/littlefs` at commit `8ed63b27be79ab59ee1cd15a950ddd64e7a602f7` | BSD-3-Clause | Not modified by this repository. |
-| pico-sdk | Not vendored; not part of this repository | `https://github.com/raspberrypi/pico-sdk`, version 2.3.0 | BSD-3-Clause (Raspberry Pi (Trading) Ltd) | N/A -- a build dependency, fetched separately per `README.md`. |
+| pico-sdk | Not vendored; not part of this repository | `https://github.com/raspberrypi/pico-sdk`, version 2.3.0 | BSD-3-Clause (Raspberry Pi (Trading) Ltd) | N/A -- a build dependency, fetched separately per `BUILDING.md`. |
 | picotool | Not vendored; not part of this repository | `https://github.com/raspberrypi/picotool`, version 2.3.0 | BSD-3-Clause (Raspberry Pi (Trading) Ltd) | N/A -- a build dependency. |
 
 ## Port-written files with no third-party origin

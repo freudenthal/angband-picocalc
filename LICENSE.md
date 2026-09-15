@@ -30,10 +30,10 @@ including local changes, is in `THIRD-PARTY.md`.
 
 ## Documentation and simplified technical English
 
-Angband, ASD-STE100 -- Simplified Technical English -- is a controlled-language standard
+ASD-STE100 -- Simplified Technical English -- is a controlled-language standard
 for aircraft maintenance documentation. It is named here because the operator-facing
-documentation in this repository (`README.md`, and `INSTALL.md`/`BUILDING.md` from stage
-120) is written to its spirit: short sentences, one instruction per step, a small
+documentation in this repository (`README.md`, `INSTALL.md`, `BUILDING.md` and
+`CHANGELOG.md`) is written to its spirit: short sentences, one instruction per step, a small
 approved-word vocabulary. ASD-STE100 itself is a specification of the ASD (AeroSpace and
 Defence Industries Association of Europe); it is not reproduced here and this repository
 claims no licence to it, only a writing style influenced by it.

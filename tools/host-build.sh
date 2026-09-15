@@ -75,7 +75,10 @@ if [ "$ARM" = 1 ]; then
 fi
 
 PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-WPORT="$(echo "$PORT" | sed 's|^/\([a-zA-Z]\)/|/mnt/\1/|')"
+# Stage 120: through cygpath first, so a checkout under a Git Bash mount such as /tmp (which
+# is not a /x/ drive path) still reaches WSL as /mnt/<drive>/...
+WPORT="$(cygpath -m -l "$PORT" 2>/dev/null || echo "$PORT")"
+WPORT="$(echo "$WPORT" | sed 's|^\([a-zA-Z]\):/|/mnt/\L\1/|; s|^/\([a-zA-Z]\)/|/mnt/\1/|')"
 
 echo "host-build: port tree $PORT"
 echo "host-build: as seen from WSL: $WPORT"

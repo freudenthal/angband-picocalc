@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Stage 080: put the release build and the lib tree into sdcard-pico2/, and prove it.
 #
-#   cd <workspace root> && angband-pico/tools/stage-card.sh [--card E:]
+#   tools/stage-card.sh [--card E:]          (STAGE_DIR=<dir> and PICOTOOL=<exe> optional)
 #
 # Writes (and replaces) only these two things in sdcard-pico2/:
 #   pico2-apps/angband.uf2      from angband-pico/build-pico2/angband.uf2 (the shipped build)
@@ -20,11 +20,18 @@
 
 set -u
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PORT="$ROOT/angband-pico"
+# Stage 120: the checkout's own directory, whatever it is called, and two overrides so the
+# script runs from a standalone clone. STAGE_DIR defaults to sdcard-pico2/ beside the
+# checkout; PICOTOOL defaults to the development workspace's copy when it is there, else to
+# picotool on PATH.
+PORT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$PORT/.." && pwd)"
 BUILD="$PORT/build-pico2"
-STAGE="$ROOT/sdcard-pico2"
-PICOTOOL="$ROOT/picotool/picotool/picotool.exe"
+STAGE="${STAGE_DIR:-$ROOT/sdcard-pico2}"
+if [ -z "${PICOTOOL:-}" ]; then
+	PICOTOOL="$ROOT/picotool/picotool/picotool.exe"
+	[ -x "$PICOTOOL" ] || PICOTOOL="picotool"
+fi
 
 CARD=""
 if [ "${1:-}" = "--card" ]; then
