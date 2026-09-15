@@ -31,7 +31,7 @@ directory.
 ## Get the source
 
 ```bash
-git clone --recurse-submodules <repository URL> angband-picocalc
+git clone --recurse-submodules https://github.com/freudenthal/angband-picocalc angband-picocalc
 cd angband-picocalc
 git submodule update --init --recursive
 ```
@@ -39,6 +39,12 @@ git submodule update --init --recursive
 The second command is necessary if you did not use `--recurse-submodules`. It is also
 necessary after each `git pull`, because a pull does not update a submodule. pico-vfs is in
 `external/pico-vfs`, and it has its own submodule, `vendor/littlefs`.
+
+On Windows, put the clone in a directory with a short path, for example
+`C:/src/angband-picocalc`. Some object files of the build have long names. If the full path
+of a file is longer than 260 characters, the compiler stops with `fatal error: opening
+dependency file ... No such file or directory`. A clone path of 59 characters works. A clone
+path of 152 characters does not work.
 
 ## Configure
 
@@ -134,6 +140,10 @@ There are three methods:
   The release build has no USB. To replace a release build, use the loader menu or BOOTSEL
   mode.
 
+  This command needs a picotool with USB support. `picotool version` shows `compiled without
+  USB support` if it has none. A picotool without USB support can configure the build and
+  run `picotool info`, but it cannot run `picotool load`.
+
 `angband.uf2` and `lib/` must always go on the card together. If they come from different
 commits, some screens can look wrong.
 
@@ -186,6 +196,37 @@ the PC, compare the card with the staging. The script does not write to the card
 
 ```bash
 tools/stage-card.sh --card E:
+```
+
+## Make a release
+
+```bash
+git tag -a v1.0.0 -m "Angband for the PicoCalc 1.0.0"
+tools/make-release.sh v1.0.0
+```
+
+The script runs `tools/stage-card.sh` first. Then it writes three files to `release/`:
+
+* `angband-picocalc-<tag>.zip`: `pico2-apps/angband.uf2` and `angband/lib/` from the
+  staging directory, and `INSTALL.md`, `LICENSE.md`, `THIRD-PARTY.md` and `copying.txt`.
+* `uf2loader-2.5-pimoroni_pico_plus2_w.zip`: `bootloader_pimoroni_pico_plus2_w_rp2350.uf2`,
+  `BOOT2350.uf2` and a `README.txt` with the source of the UF2 Loader.
+* `SHA256SUMS`: the SHA-256 sums of the two zips.
+
+The script stops with exit 1 if one of these checks fails:
+
+* The working tree has no changes and no untracked files.
+* The tag exists and is on the current commit.
+* `tools/stage-card.sh` exits 0.
+* The two UF2 Loader files are the files of UF2 Loader 2.5 that the script knows by their
+  SHA-256 sums. Set `LOADER_DIR` to the directory with the two files. The default is
+  `uf2loader/output` beside the clone.
+
+The script makes the same zips each time for the same tag. Each file in a zip has the date of
+the tagged commit. To check the sums:
+
+```bash
+cd release && sha256sum -c SHA256SUMS
 ```
 
 ## Where to read more
