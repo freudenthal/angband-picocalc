@@ -1,14 +1,16 @@
 # tools/
 
-Every file in this directory (`ls tools | wc -l` is 19; this table has 19 rows). "Suite"
-means it is one of the five parts of the regression suite (`specifications.md` §9); "bench"
-means it is part of the optimisation-round tooling from stage 065 onward and needs a device
-and the development workspace's `picocalc-device-harness` project (a sibling of this
-repository, not shipped with it); "release" means it is part of building or staging a
-release; "data" means it is not a program, but a file another tool reads.
+Every file in this directory (`ls tools | wc -l` is 20; this table has 20 rows, this file
+included). "Suite" means it is one of the five parts of the regression suite
+(`specifications.md` §9); "bench" means it is part of the optimisation-round tooling from
+stage 065 onward and needs a device and the development workspace's
+`picocalc-device-harness` project (a sibling of this repository, not shipped with it);
+"release" means it is part of building or staging a release; "data" means it is not a
+program, but a file another tool reads.
 
 | Tool | What it does | Needs | Group |
 |---|---|---|---|
+| `README.md` | This file. | Nothing. | Documentation |
 | `compile-sweep.sh` | Cross-compiles every `src/game/` unit for the RP2350 with the project's flags; reports `N of M compiled`. | Nothing but the ARM toolchain (`tools/pico-env.sh`). | Suite (part 1) |
 | `host-build.sh` | Builds the vendored core natively in WSL, links it against upstream's `main.c`/`main-test.c`, runs the end-to-end tests under `tests/`, and runs the heap probe. `--borg` builds the separate PC-side borg binary instead (bench prerequisite). | WSL. | Suite (part 2) |
 | `heapshim.c` | An `LD_PRELOAD` malloc counter, compiled and used by `host-build.sh`. Not run directly. | WSL, via `host-build.sh`. | Suite (data/support) |
