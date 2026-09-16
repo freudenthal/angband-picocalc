@@ -8,6 +8,7 @@
 #   angband_fsdiag      stage 030. SD card diagnostic.
 #   angband_termdiag    stage 040. Terminal front end diagnostic.
 #   angband             stage 050. The game.
+#   angband_codediag    stage 150 part A. PSRAM code-execution probe.
 #
 # This project builds against pico-sdk 2.3.0, not an older workspace SDK, because 2.3.0
 # carries hardware_psram and the PSRAM linker region. Configure from this directory with:
@@ -679,6 +680,31 @@ pico_enable_stdio_usb(angband_termdiag 1)
 pico_enable_stdio_uart(angband_termdiag 0)
 
 pico_add_extra_outputs(angband_termdiag)
+
+# ---------------------------------------------------------------------------------------
+# angband_codediag (stage 150 part A) -- does code executing from PSRAM escape the QMI
+# toll? Links angband_platform only, like angband_psramdiag and angband_fsdiag: a failure
+# here is the platform's or the SDK's fault, not the game's. Does NOT link angband_core.
+#
+# hardware_exception is for the HardFault handler (specifications.md's stage 150 background:
+# "Expect PSRAM to be executable; item 3 proves it and installs a HardFault handler that
+# prints before anything relies on it").
+#
+# BOTH stdio transports are unconditional here, unlike the other three diagnostics (which
+# keep USB only, specifications.md 10): the case UART (COM7) is what the device harness
+# drives, is powered independently of the Pico's own USB port, and survives every reset
+# (tools/harness/readme.md), so this program needs it available from the first boot line.
+add_executable(angband_codediag
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/codediag.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/codediag_loops.c
+)
+
+target_link_libraries(angband_codediag PRIVATE angband_platform hardware_exception)
+
+pico_enable_stdio_usb(angband_codediag 1)
+pico_enable_stdio_uart(angband_codediag 1)
+
+pico_add_extra_outputs(angband_codediag)
 
 # ---------------------------------------------------------------------------------------
 # angband (stage 050) -- the game.
