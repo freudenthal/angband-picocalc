@@ -579,6 +579,18 @@ static bool push_serial_key(int c)
         return false;
     }
 #endif
+    else if (c == 0x1D)
+    {
+        // PORT: stage 160 item 8. A memory-report request, not a key -- the same shape
+        // as 0x1C just above, and for the same reason it returns false rather than
+        // setting `got` in check_events(). Always available under ANGBAND_SERIAL_KEYS
+        // (which needs ANGBAND_CONSOLE, so pico_report_memory_now() always exists here):
+        // unlike the screen mirror it costs one line of serial, not a byte stream, so it
+        // does not need its own option.
+        extern void pico_report_memory_now(void);
+        pico_report_memory_now();
+        return false;
+    }
     else if (c >= 0x01 && c <= 0x1A)
     {
         // 0x08, 0x09, 0x0A and 0x0D were all taken above -- the spec's "except the four

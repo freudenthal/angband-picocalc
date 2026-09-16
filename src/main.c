@@ -47,6 +47,7 @@
 #include "platform/main-pico.h"
 #include "platform/psram_heap.h"
 #include "platform/sd_fs.h"
+#include "platform/stackguard.h"
 #include "platform/syscalls.h"
 
 #include "angband.h"
@@ -178,6 +179,12 @@ static void halt_with(const char *what, const char *detail)
 // stage 030 learned that through angband_fsdiag and specifications.md 6.5 records it. Set
 // both before the first call into any core code.
 
+// Forward declaration: report_memory() is defined below, inside the same #ifdef
+// ANGBAND_CONSOLE block that needs it here, for stage 160 item 8's "before quit()" report.
+#ifdef ANGBAND_CONSOLE
+static void report_memory(const char *tag);
+#endif
+
 static void hook_plog(const char *str)
 {
     if (!str)
@@ -197,6 +204,9 @@ static void hook_plog(const char *str)
 
 static void hook_quit(const char *str)
 {
+#ifdef ANGBAND_CONSOLE
+    report_memory("quit");
+#endif
     halt_with(str ? "Angband quit" : "Angband exited", str);
 }
 
@@ -288,6 +298,20 @@ static void report_memory(const char *tag)
     stdio_flush();
 }
 
+// Stage 160 item 8: most of the coverage session's scenarios are mid-level screens (help,
+// knowledge, options, the character sheet, an inscribe or a cast) that EVENT_NEW_LEVEL_DISPLAY
+// never fires for, so there has to be a report a harness script can ask for on demand rather
+// than only on a level change. Not static: src/platform/main-pico.c calls it from
+// push_serial_key()'s 0x1D branch, the same shape dump_screen() is called from for 0x1C
+// (ANGBAND_SERIAL_SCREEN). No header of its own for the same reason ANGBAND_SYNC's
+// sync_end() has none (specifications.md 13): one more always-present object would move
+// the linker's long-branch veneers even empty, and this is neither always-present nor
+// empty, so it stays a plain extern at the one call site that needs it.
+void pico_report_memory_now(void)
+{
+    report_memory("manual");
+}
+
 static void pico_on_new_level(game_event_type type, game_event_data *data, void *user)
 {
     char tag[32];
@@ -298,6 +322,23 @@ static void pico_on_new_level(game_event_type type, game_event_data *data, void 
 
     strnfmt(tag, sizeof(tag), "level %d", player ? (int)player->depth : -1);
     report_memory(tag);
+}
+
+// Stage 160 item 8's coverage session wants a report at death, at the savefile write and
+// at the score screen, none of which has its own event (EVENT_ENTER_DEATH/LEAVE_DEATH are
+// declared in game-event.h but this vendored tree never signals either -- confirmed with
+// `grep -rn EVENT_ENTER_DEATH src/game/*.c`). ui-game.c's close_game() signals EVENT_LEAVE_GAME
+// exactly once, after death_screen()+the death save on death or after save_game_checked()+
+// predict_score() on an ordinary quit, and either way it is the last event before main()
+// resumes -- so one handler, tagged by player->is_dead, stands in for all three without
+// editing a single src/game/ source.
+static void pico_on_leave_game(game_event_type type, game_event_data *data, void *user)
+{
+    (void)type;
+    (void)data;
+    (void)user;
+
+    report_memory((player && player->is_dead) ? "death" : "leave_game");
 }
 
 #endif /* ANGBAND_CONSOLE: the stack readers and the memory reports */
@@ -657,6 +698,35 @@ static void run_boot_profile_selftest(void)
 }
 #endif
 
+// Stage 160 item 4/7.1-7.2: proof before trust, the same reasoning as
+// run_boot_profile_selftest() above -- a check that cannot see the thing changed is not a
+// check of that change (specifications.md 13). Recurses with a 512 B local array until it
+// passes the guard's limit; with ANGBAND_STACKGUARD_TEST_NOGUARD also set,
+// stackguard_arm() above is never called, MSPLIM stays at its SDK default (never armed),
+// and the same recursion runs on into whatever sits below __StackBottom instead of
+// faulting -- item 7.2's negative control, without which the first run proves nothing about
+// the guard specifically (it could be any fault the recursion happens to trip).
+//
+// volatile locals and the noinline/no_optimize pair keep -Os from proving the recursion
+// terminates (it does not, on purpose) and from turning it into a loop with one stack frame
+// reused throughout, which would never reach the limit at all.
+#ifdef ANGBAND_STACKGUARD_TEST
+static void __attribute__((noinline, optimize("O0"))) stackguard_test_recurse(uint32_t depth)
+{
+    volatile uint8_t eat[512];
+
+    for (size_t i = 0; i < sizeof(eat); i++)
+        eat[i] = (uint8_t)(depth + i);
+
+    stackguard_test_recurse(depth + 1);
+
+    // Never reached, and there is no return type to hide it: this line stops the whole
+    // function from being a guaranteed-infinite tail call that -Os could still fold back
+    // into a loop despite optimize("O0") on this translation unit's caller-visible ABI.
+    (void)eat[0];
+}
+#endif
+
 int main(void)
 {
 #ifdef ANGBAND_CONSOLE
@@ -666,6 +736,15 @@ int main(void)
     BOOTPROF_MARK("main");
 
     stack_paint();
+
+    // Stage 160, open question 1: armed in every build, including the shipped one, because
+    // a halt loses only the session since the last save while silent corruption below the
+    // stack can lose the savefile itself. Straight after the paint, before anything else
+    // pushes a frame the guard would have to survive: see src/platform/stackguard.c for the
+    // reserve and the handler.
+#ifndef ANGBAND_STACKGUARD_TEST_NOGUARD
+    stackguard_arm();
+#endif
 
     // By name, and before the clock and the first allocation respectively. See the header
     // comment; specifications.md 6.2 and 6.3 carry the whole reasoning.
@@ -739,6 +818,7 @@ int main(void)
     BOOTPROF_MARK("init_display");
 #ifdef ANGBAND_CONSOLE
     event_add_handler(EVENT_NEW_LEVEL_DISPLAY, pico_on_new_level, NULL);
+    event_add_handler(EVENT_LEAVE_GAME, pico_on_leave_game, NULL);
 
     // 1.3 MB of gamedata through file_getl at ~460 KB/s (specifications.md 6.3) plus the
     // parsing. Say so before it starts: init_angband() signals EVENT_ENTER_INIT straight
@@ -754,6 +834,16 @@ int main(void)
     // this point runs on this tree.
     run_boot_profile_selftest();
     halt_with("Boot profiler self-test complete", NULL);
+#endif
+
+#ifdef ANGBAND_STACKGUARD_TEST
+    // Item 4/7.1-7.2: this build's only job. Recurses until it passes the guard's limit
+    // (or, with ANGBAND_STACKGUARD_TEST_NOGUARD, until something else gives out); either
+    // way nothing below this point runs on this tree.
+    boot_say("stackguard test: planting a recursive overflow now");
+    stdio_flush();
+    stackguard_test_recurse(0);
+    halt_with("Stack guard test returned (should be unreachable)", NULL);
 #endif
 
 #ifdef ANGBAND_CONSOLE

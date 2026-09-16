@@ -548,14 +548,73 @@ linker route means the whole program runs on the big stack **from reset**, inclu
 SDK's own runtime init and every interrupt; it needs no naked assembly; and the placement is
 visible in the map file and in `nm`, where an MSP switch would be invisible to both.
 
-**Why 64 KB and not the 32 KB the stage plan proposed.** The true figure was unknown until
-it was measured, and on a first bring-up a stack overflow is indistinguishable from any other
-hard fault. `src/main.c` paints the unused stack with `0xC5C5C5C5` at boot and reports the
-high-water mark on every level; that number is what a later stage should trim this to. 64 KB
-of 520 KB.
+**Why 64 KB, still.** Stage 050 chose it over the stage plan's 32 KB because the true figure
+was unknown until it was measured, and on a first bring-up a stack overflow is
+indistinguishable from any other hard fault. `src/main.c` paints the unused stack with
+`0xC5C5C5C5` at boot and reports the high-water mark on every level. Stage 160
+(2026-09-15) was the later stage that measured it -- and found the number every prior stage
+had quoted, 10,672 B from the borg's play, was not the worst case: a device session that also
+covered the help browser, the knowledge menu, a real death and the score list found
+**30,480 B**, from `show_scores()`/`predict_score()` (`ui-score.c`) nested under the
+knowledge menu or the death screen. Applying the stage's own sizing rule to that real number
+-- `max(3x measured, measured + largest single frame + 4 KB)` -- calls for **~94 KB**, not a
+cut. **The stack stays at 64 KB**, on the user's decision: growing it works against freeing
+SRAM, and shrinking it below the 3x line is exactly the mistake specifications.md §13 warns
+against ("the one path nobody measured is the one that overflows"). 64 KB over a 30,480 B
+measured peak is a ~2.15x margin, not the stage's own 3x bar -- stated as what it is, not
+rounded up to sound safer. See specifications.md §7.1/§12 for the full arithmetic and
+§6.5/§7.2 for the guard stage 160 added instead.
+
+**`ANGBAND_STACK_SIZE`, a CMake cache variable since stage 160**, replaces the old hard-coded
+`0x10000` so a candidate size can be built without editing this file (validated at configure
+time: a multiple of 4,096, at least 16,384 unless `ANGBAND_STACK_SIZE_UNSAFE=ON` deliberately
+turns that floor off for a torture-test tree). The default is still 65,536.
 
 **If this is ever reverted**, the stack goes back to 2 KB in `SCRATCH_Y` and the game faults
 during `init_angband()`. It is not optional on this part.
+
+## The stack guard (stage 160)
+
+`src/platform/stackguard.c`/`.h`, new files, added to the `angband` executable's own source
+list (not `angband_platform`: the three diagnostics keep the stock 2 KB stack and the stock,
+unarmed `MSPLIM`, and `angband_codediag` has its own unrelated `HardFault` handler). Armed in
+**every** build, including the shipped one -- open question 1 answered yes: a halt loses only
+the session since the last save, silent corruption below the stack can lose the savefile
+itself.
+
+**Why it exists.** The SDK never arms `MSPLIM` on this board: `crt0.S` zeroes it only on the
+debug-entry path a normal UF2 boot never takes, and the SDK's own arming code
+(`runtime_init_per_core_install_stack_guard()`) is compiled out by default
+(`PICO_USE_STACK_GUARDS` defaults to 0, `pico/platform.h`), which this project never
+overrides. Without this stage, an overflow keeps writing into whatever is below
+`__StackBottom` -- `.bss`, possibly mid-savefile-write -- with no fault at all.
+
+**What it does.** `stackguard_arm()` sets `MSPLIM` to `__StackBottom + 1024` (the reserve:
+room for the `HardFault` entry's own pushed frame and the handler's own frame, proved enough
+by the device session) and installs a naked-trampoline-into-a-C-handler `HardFault` handler
+(bootprof.c's SysTick handler and codediag.c's own `HardFault` handler are the same shape).
+The handler's first instruction clears `MSPLIM` back to 0 -- if the fault entry's own frame
+push crossed the limit, SP is already at or below it, and the handler's own prologue must not
+re-fault on its own frame -- then decodes `SCB->CFSR`/`HFSR` (`STKOF` is CFSR bit 20,
+`core_cm33.h`'s `SCB_CFSR_STKOF_Msk`), prints the stacked PC/LR and the fault over a polled
+UART write in console builds, and draws one solid red row across the top of the panel via
+`lcd_set_window()`/`lcd_write16_data()` -- **not** `lcd_putc()`/`lcd_solid_rectangle()`, which
+acquire `lcd_sem`: the code the overflow interrupted might have been mid-`lcd_blit()` holding
+that semaphore, and a handler that tries to acquire it could deadlock the one path meant to
+report the fault.
+
+**Placed in SRAM, the whole file** (`ANGBAND_SRAM_LIBRARY_MEMBERS`, unconditionally, the same
+"whole object, not hand-picked functions" choice `turnlog.c`/`bootprof.c` make): a fault
+handler must not depend on flash state. Found by this stage's own criterion, not assumed --
+the first build had it in flash (`0x1006xxxx` in `nm`) until the acceptance check caught it.
+
+**Proven on the device, both directions.** `ANGBAND_STACKGUARD_TEST` plants a recursive
+function with a 512 B local array before `init_angband()` would run; with the guard armed it
+faults with `STKOF pc=0x1003dfee lr=0x1003e055`, both resolving via `addr2line` to the planted
+function. `ANGBAND_STACKGUARD_TEST_NOGUARD` runs the identical recursion with
+`stackguard_arm()` never called: no message at all, just silence -- the negative control
+specifications.md §13 asks for, without which the first result proves nothing about the guard
+specifically.
 
 ## The hot code in SRAM: two more, generated, overrides
 

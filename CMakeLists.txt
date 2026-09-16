@@ -162,7 +162,7 @@ option(ANGBAND_SAVE_RESTORE "Stage 065: copy PicoCalc.master over the savefile a
 option(ANGBAND_CONSOLE "Developer console: USB+UART stdio, boot lines, memory reports, the 10 s USB wait" OFF)
 
 foreach(needs_console ANGBAND_SERIAL_KEYS ANGBAND_SERIAL_SCREEN ANGBAND_SYNC ANGBAND_TURN_LOG
-                      ANGBAND_SAVE_RESTORE ANGBAND_BOOT_PROFILE)
+                      ANGBAND_SAVE_RESTORE ANGBAND_BOOT_PROFILE ANGBAND_STACKGUARD_TEST)
     if(${needs_console} AND NOT ANGBAND_CONSOLE)
         message(FATAL_ERROR
             "${needs_console}=ON needs ANGBAND_CONSOLE=ON: every harness and bench option "
@@ -218,6 +218,36 @@ option(ANGBAND_BOOT_PROFILE_SELFTEST_BREAK
 if(ANGBAND_BOOT_PROFILE_SELFTEST_BREAK AND NOT ANGBAND_BOOT_PROFILE_SELFTEST)
     message(FATAL_ERROR
         "ANGBAND_BOOT_PROFILE_SELFTEST_BREAK=ON needs ANGBAND_BOOT_PROFILE_SELFTEST=ON.")
+endif()
+
+# ANGBAND_STACKGUARD_TEST (stage 160 item 4) -- proof before trust, the same shape as
+# ANGBAND_BOOT_PROFILE_SELFTEST above. OFF by default; refused without ANGBAND_CONSOLE (the
+# planted fault's report is read off the console).
+#
+#   cmake -B build-pico2-stackguard-test -S . ... -DANGBAND_CONSOLE=ON -DANGBAND_STACKGUARD_TEST=ON
+#
+# With it ON, src/main.c calls a recursive function with a 512 B local array, before
+# init_angband() would run, until it passes __StackBottom + STACKGUARD_RESERVE. The guard
+# (armed unconditionally, see stackguard.c) must report the overflow and halt.
+#
+# ANGBAND_STACKGUARD_TEST_NOGUARD is item 7.2's negative control: the same planted overflow
+# with stackguard_arm() itself never called, so MSPLIM stays at its SDK default (0, never
+# armed) and the overflow runs on past the bottom into whatever .bss sits below the stack
+# -- proving the first run's message came from the guard and not from some other fault the
+# planted function happened to trip. Refused without ANGBAND_STACKGUARD_TEST=ON: it is a
+# variant of that test, not a thing on its own.
+option(ANGBAND_STACKGUARD_TEST
+    "Stage 160 item 4: plant a recursive overflow before init_angband() to prove the guard fires" OFF)
+if(ANGBAND_STACKGUARD_TEST AND NOT ANGBAND_CONSOLE)
+    message(FATAL_ERROR
+        "ANGBAND_STACKGUARD_TEST=ON needs ANGBAND_CONSOLE=ON: the planted overflow's report "
+        "is read off the console. Configure with -DANGBAND_CONSOLE=ON.")
+endif()
+option(ANGBAND_STACKGUARD_TEST_NOGUARD
+    "Stage 160 item 7.2: the same planted overflow with stackguard_arm() never called (negative control)" OFF)
+if(ANGBAND_STACKGUARD_TEST_NOGUARD AND NOT ANGBAND_STACKGUARD_TEST)
+    message(FATAL_ERROR
+        "ANGBAND_STACKGUARD_TEST_NOGUARD=ON needs ANGBAND_STACKGUARD_TEST=ON.")
 endif()
 
 # BATTERY_FAKE (stage 100) -- a constant in place of the battery register, so the 15 % and
@@ -733,11 +763,18 @@ if(ANGBAND_BOOT_PROFILE)
     list(APPEND ANGBAND_BOOT_PROFILE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/bootprof.c)
 endif()
 
+# Stage 160. stackguard.c is on the angband target's own source list, not angband_platform:
+# angband_platform is also linked by the three diagnostics, which keep the stock 2 KB
+# SCRATCH_Y stack and the stock (unarmed) MSPLIM, and angband_codediag has its own
+# unrelated HardFault handler for a different probe. Unlike bootprof.c it is unconditional
+# (open question 1: armed in every build, including the shipped one) so it is a plain entry
+# here, the same as turnlog.c and utf8.c above.
 add_executable(angband
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/main-pico.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/turnlog.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/utf8.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/stackguard.c
     ${ANGBAND_BOOT_PROFILE_SOURCES}
     $<TARGET_OBJECTS:angband_core>
 )
@@ -779,10 +816,13 @@ target_compile_definitions(angband PRIVATE
     $<$<BOOL:${ANGBAND_BOOT_PROFILE}>:ANGBAND_BOOT_PROFILE=1>
     $<$<BOOL:${ANGBAND_BOOT_PROFILE_SELFTEST}>:ANGBAND_BOOT_PROFILE_SELFTEST=1>
     $<$<BOOL:${ANGBAND_BOOT_PROFILE_SELFTEST_BREAK}>:ANGBAND_BOOT_PROFILE_SELFTEST_BREAK=1>
+    # Stage 160 item 4/7.2. src/main.c only: no src/game/ source knows either symbol exists.
+    $<$<BOOL:${ANGBAND_STACKGUARD_TEST}>:ANGBAND_STACKGUARD_TEST=1>
+    $<$<BOOL:${ANGBAND_STACKGUARD_TEST_NOGUARD}>:ANGBAND_STACKGUARD_TEST_NOGUARD=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
-# SCRATCH_Y as a gap for this stage to close, and the game cannot live in it -- one frame
+# SCRATCH_Y as a gap for stage 050 to close, and the game cannot live in it -- one frame
 # of ui-output.c's text_out_to_screen() is 6 KB on its own.
 #
 # Two halves. The linker script overrides in src/link/ move the .stack_dummy section out of
@@ -791,11 +831,33 @@ target_compile_definitions(angband PRIVATE
 # whole region). crt0.S reads PICO_STACK_SIZE and pico_crt0 is an INTERFACE library that
 # adds crt0.S as a source to this executable, so a PRIVATE definition here reaches it.
 #
-# 64 KB, not the 32 KB the stage plan proposed. Deep recursion in the dungeon generator and
-# 1 KB path/line buffers nested several calls apart make the true figure unknown until it
-# is measured, and on a first bring-up a stack overflow is indistinguishable from any other
-# hard fault. src/main.c paints the stack at boot and reports the high-water mark on every
-# level, which is the number a later stage should trim this to. 64 KB of 520 KB.
+# Stage 050 chose 64 KB, not the 32 KB the stage plan proposed, because deep recursion in
+# the dungeon generator and 1 KB path/line buffers nested several calls apart made the true
+# figure unknown, and on a first bring-up a stack overflow is indistinguishable from any
+# other hard fault. src/main.c paints the stack at boot and reports the high-water mark on
+# every level. Stage 160 measured the worst case (specifications.md 7.1/12) and made the
+# size a cache variable so a candidate can be built without editing this file; validated at
+# configure time to be a multiple of 4,096 and at least 16,384, because PICO_STACK_SIZE
+# feeds .stack_dummy's reserved size directly and an unaligned or tiny value would either
+# waste part of a flash page's worth of RAM alignment or leave no room for a frame.
+set(ANGBAND_STACK_SIZE 65536 CACHE STRING
+    "Stage 160: core-0 stack size in bytes for the angband target, multiple of 4096, >= 16384")
+# Item 7.4 deliberately wants a below-floor tree (12,288 B) to prove the guard catches what
+# the floor exists to rule out; ANGBAND_STACK_SIZE_UNSAFE=ON is how that one candidate opts
+# out of the floor without weakening it for every other tree. The 4,096 alignment check is
+# never optional: it is a linker-section requirement (PICO_STACK_SIZE feeds .stack_dummy's
+# reserved size directly), not a safety margin.
+option(ANGBAND_STACK_SIZE_UNSAFE
+    "Stage 160 item 7.4 only: allow ANGBAND_STACK_SIZE below the 16,384 floor" OFF)
+math(EXPR ANGBAND_STACK_SIZE_REM "${ANGBAND_STACK_SIZE} % 4096")
+if(NOT ANGBAND_STACK_SIZE_REM EQUAL 0)
+    message(FATAL_ERROR "ANGBAND_STACK_SIZE (${ANGBAND_STACK_SIZE}) must be a multiple of 4096")
+endif()
+if(ANGBAND_STACK_SIZE LESS 16384 AND NOT ANGBAND_STACK_SIZE_UNSAFE)
+    message(FATAL_ERROR
+        "ANGBAND_STACK_SIZE (${ANGBAND_STACK_SIZE}) must be at least 16384 "
+        "(pass -DANGBAND_STACK_SIZE_UNSAFE=ON to build a deliberately-undersized tree)")
+endif()
 pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_SOURCE_DIR}/src/link
     FILES sections_stack.incl section_end.incl)
 
@@ -849,6 +911,14 @@ if(ANGBAND_BOOT_PROFILE)
     list(APPEND ANGBAND_SRAM_LIBRARY_MEMBERS
         */src/platform/bootprof.c.obj */hardware_timer/timer.c.obj)
 endif()
+# Stage 160. THE WHOLE FILE, unconditionally -- not gated by an option, unlike turnlog.c and
+# bootprof.c above, because the guard itself is not optional (open question 1: armed in
+# every build). Same reasoning as bootprof.h's: a fault handler must not depend on flash
+# state, so stackguard_hardfault_isr/_c and the polled UART helpers they call cannot be left
+# in flash, which XIP may not be able to serve cleanly at the moment of a fault. Excluding
+# the object rather than picking out individual functions is the same choice the two blocks
+# above make, checked the same way (sram-check.py reads this list, not a hand-typed one).
+list(APPEND ANGBAND_SRAM_LIBRARY_MEMBERS */src/platform/stackguard.c.obj)
 set(ANGBAND_SRAM_PATTERNS "")
 foreach(obj IN LISTS ANGBAND_SRAM_OBJECTS)
     string(APPEND ANGBAND_SRAM_PATTERNS " */src/game/${obj}.c.obj")
@@ -862,18 +932,15 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/src/link/default_rodata_excludes.incl
                ${CMAKE_CURRENT_BINARY_DIR}/link-gen/default_rodata_excludes.incl @ONLY)
 pico_add_linker_script_override_path(angband ${CMAKE_CURRENT_BINARY_DIR}/link-gen
     FILES default_text_excludes.incl default_rodata_excludes.incl)
-target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
+target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=${ANGBAND_STACK_SIZE})
 
 # pico_rand for the RNG seed: specifications.md 6.3 says time() here is boot time plus a
 # constant, so z-rand.c's Rand_init() would roll the same dungeon on every boot.
-target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand)
-
-# Stage 140. exception_set_exclusive_handler() (bootprof.c) is hardware_exception, which
-# nothing else in this tree links. Only when the option is on: the shipped build must not
-# gain a dependency it never calls into.
-if(ANGBAND_BOOT_PROFILE)
-    target_link_libraries(angband PRIVATE hardware_exception)
-endif()
+# Stage 160: stackguard.c calls exception_set_exclusive_handler() unconditionally, so
+# hardware_exception is now an unconditional dependency of this target (bootprof.c, stage
+# 140, uses the same library only when ANGBAND_BOOT_PROFILE is on; stackguard.c's own use
+# is not optional, so no separate guard is needed for it here).
+target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand hardware_exception)
 
 # specifications.md 6.5. The game is not a diagnostic. In a console build every boot line,
 # the init_angband() timing and the per-level heap figures go to serial, and a quit()

@@ -46,7 +46,8 @@ src/platform/psram_heap.c
 src/platform/sd_fs.c
 src/platform/syscalls.c
 src/platform/turnlog.c
-src/platform/battery.c"
+src/platform/battery.c
+src/platform/stackguard.c"
 
 # Stage 120: whichever Python 3 this machine has on PATH.
 PY="$(command -v python || command -v python3 || command -v py)"
