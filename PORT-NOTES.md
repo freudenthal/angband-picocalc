@@ -415,6 +415,22 @@ function makes no call into flash-resident code. The I2C read is not here: it is
 branch, at most every 30 s. The warnings and the automatic save at 5 % are in `src/main.c`
 (an `EVENT_REFRESH` handler), not in any vendored file.
 
+### 9. `src/game/datafile.c` — the stage 140 boot profiler's parser bracket
+
+One hunk, `run_parser()` (`datafile.c:45`): `BOOTPROF_PARSER_BEGIN()` before `fp->init()` and
+`BOOTPROF_PARSER_END(fp->name)` at both returns (the `!p` early return and the normal one).
+`((void)0)` with `ANGBAND_BOOT_PROFILE` unset -- checked the same way every other option in
+this tree is, `objcopy -O binary --only-section=.text` and `cmp` against a build with the
+option never named, and it is byte-identical.
+
+Declared in `src/platform/bootprof.h` under the same `<stdint.h>`-only rule as `turnlog.h`
+and `sync.h`: `datafile.c` compiles as part of `angband_core`, an OBJECT library that never
+sees `ANGBAND_CONSOLE` even in a console build (specifications.md 10), so the header itself
+carries no `#error` guard -- that lives in `bootprof.c`, which does see it, exactly where
+`turnlog.c`'s own guard is and not in `turnlog.h`. Measurement only: `run_parser()`'s control
+flow is unchanged, only split (`struct parser *p;` then `p = fp->init();` instead of one
+combined declaration) so the macro calls have somewhere to sit between them.
+
 ## The platform layer
 
 `src/platform/` is not vendored from Angband. It is the PicoCalc hardware layer, shared with

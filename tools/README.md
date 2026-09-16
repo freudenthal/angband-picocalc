@@ -1,6 +1,6 @@
 # tools/
 
-Every file in this directory (`ls tools | wc -l` is 21; this table has 21 rows, this file
+Every file in this directory (`ls tools | wc -l` is 22; this table has 22 rows, this file
 included). "Suite" means it is one of the five parts of the regression suite
 (`specifications.md` §9); "bench" means it is part of the optimisation-round tooling from
 stage 065 onward and needs a device and the development workspace's
@@ -31,6 +31,7 @@ program, but a file another tool reads.
 | `turnlog.py` | Reduces an `ANGBAND_TURN_LOG` serial capture to per-phase medians and percentiles; `--compare` diffs two captures. | A device capture, and the development workspace's own convention for where captured bench tags are stored. **Not part of the release.** | Bench |
 | `serial-capture.py` | Saves the board's serial output to a file while it happens, for later reduction by `turnlog.py`. | A device and its serial port. **Not part of the release.** | Bench |
 | `sram-check.py` | Reads `ANGBAND_SRAM_OBJECTS` out of `CMakeLists.txt` and proves every symbol of every listed object linked into a given build tree is at an SRAM address. | A configured build tree; no device. **Not part of the release.** | Bench |
+| `bootprof.py` | Reduces an `ANGBAND_BOOT_PROFILE` serial capture to phase, parser, function, object and caller tables, resolving addresses with `arm-none-eabi-nm` and the tree's `.map` file. `--selftest` proves the reduction itself against a synthetic capture, no device. | A device capture and the matching build tree (`angband.elf`/`.map`); no device for `--selftest`. **Not part of the release.** | Bench |
 
 None of the "not part of the release" tools are needed to build or play the game; they say
 so in their own header comment. A standalone clone can ignore them entirely and still pass

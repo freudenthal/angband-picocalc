@@ -42,6 +42,7 @@
 #include "pico/stdlib.h"
 
 #include "platform/battery.h"
+#include "platform/bootprof.h"
 #include "platform/lcd.h"
 #include "platform/main-pico.h"
 #include "platform/psram_heap.h"
@@ -550,11 +551,119 @@ static void __not_in_flash_func(pico_battery_refresh)(game_event_type type,
 
 // ---------------------------------------------------------------------------------------
 
+#ifdef ANGBAND_BOOT_PROFILE_SELFTEST
+// Stage 140 item 6. Runs before init_angband() and, having proven or disproven the
+// sampler, halts instead of continuing into it: this build's only job is to check the
+// sampler, and letting a second, real dump follow it (init_angband()'s own) would mix
+// synthetic and real samples in one capture, which is worse than not sampling at all.
+//
+// THE TWO BURN FUNCTIONS ARE HERE, NOT IN bootprof.c: bootprof.c.obj is excluded into SRAM
+// whole when ANGBAND_BOOT_PROFILE is on (CMakeLists.txt), so a function that has to prove
+// out as FLASH cannot live there -- it would be swept along with everything else. Both spin
+// on time_us_64() rather than a fixed iteration count, so the burn length does not depend
+// on which region runs it -- the region is exactly the thing under test.
+//
+// BOTH ARE __attribute__((noinline)), AND THAT WAS FOUND THE HARD WAY, ON THE DEVICE, BY
+// THIS VERY SELF-TEST. Each is called from exactly one site, and at -Os GCC inlined the
+// first cut of bootprof_burn_sram() into run_boot_profile_selftest() and that into main() --
+// __not_in_flash_func() only sets a section attribute, it does not stop inlining (the SDK's
+// own pico/platform/sections.h says so: __no_inline_not_in_flash_func() exists precisely
+// because the plain macro does not), and inlining across a section boundary simply drops
+// the boundary, so the "SRAM" burn's samples landed wherever main() lives -- flash. The
+// first device capture showed it directly: no bootprof_burn_sram symbol anywhere in
+// angband.elf.map. A check that cannot see the thing changed is not a check of that change
+// (specifications.md 13) -- this is why the self-test is device-run before anything else in
+// this stage is trusted, not merely reasoned about.
+//
+// THE CLOCK IS CHECKED EVERY 100,000 ITERATIONS, NOT EVERY ONE. A second device capture,
+// taken after the inlining fix, found a THIRD thing: checking time_us_64() every iteration
+// makes the loop's OWN four instructions a small fraction of its wall time next to a real
+// function call (branch, veneer, the double-read retry loop time_us_64() itself needs), so
+// most samples landed in the CALLEE, not in the planted function -- correctly attributed,
+// once tools/bootprof.py's bucket-overlap fix (see its own comment) stopped crediting a
+// chunk of it to hardware_timer.c's next-door neighbour, but still the wrong shape for a
+// test that wants "2,000 samples IN THE PLANTED FUNCTION". Calling the clock rarely makes
+// the loop's own body -- entirely in the region under test -- the thing nearly every sample
+// lands on, which is what the criterion actually asks for.
+#define SELFTEST_BURN_MS 2000u
+#define SELFTEST_CLOCK_CHECK_EVERY 100000u
+
+static void __attribute__((noinline)) bootprof_burn_flash(uint32_t ms)
+{
+    uint64_t until = time_us_64() + (uint64_t)ms * 1000u;
+    volatile uint32_t sink = 0;
+    uint32_t since_check = 0;
+
+    for (;;)
+    {
+        sink++;
+        if (++since_check >= SELFTEST_CLOCK_CHECK_EVERY)
+        {
+            since_check = 0;
+            if (time_us_64() >= until)
+                break;
+        }
+    }
+}
+
+// __no_inline_not_in_flash_func(), not __not_in_flash_func(): see above. This is the fix,
+// not the original attribute pico_battery_refresh() uses below -- that one is safe without
+// __noinline only because its address is taken (event_add_handler() stores it as a function
+// pointer), which by itself already forces a standalone, addressable instance to exist.
+static void __no_inline_not_in_flash_func(bootprof_burn_sram)(uint32_t ms)
+{
+    uint64_t until = time_us_64() + (uint64_t)ms * 1000u;
+    volatile uint32_t sink = 0;
+    uint32_t since_check = 0;
+
+    for (;;)
+    {
+        sink++;
+        if (++since_check >= SELFTEST_CLOCK_CHECK_EVERY)
+        {
+            since_check = 0;
+            if (time_us_64() >= until)
+                break;
+        }
+    }
+}
+
+// THE FIRST DEVICE CAPTURE FOUND A SECOND DEFECT, AND IT WAS IN tools/bootprof.py, NOT IN
+// THE SAMPLER OR IN THIS FUNCTION. The reduction attributed a large share of both burns'
+// samples to hardware_timer.c's timer_hardware_alarm_claim()/timer_busy_wait_us() -- two
+// functions this loop never calls (checked on the device's own disassembly). The cause:
+// timer_hardware_alarm_claim (36 B) and timer_time_us_64 (which THIS loop calls constantly,
+// through time_us_64()) sit BACK TO BACK with no gap, and bootprof.py's 16-byte buckets
+// (matching bootprof.c's BOOTPROF_BUCKET_SHIFT) are coarser than either function -- so the
+// bucket straddling the boundary (0x...780, 12 of its 16 bytes actually timer_time_us_64)
+// was resolved as a single point and credited whole to whichever symbol contained the
+// bucket's BASE address. Proven by two things a passing coverage figure alone did not show:
+// masking every NVIC IRQ 0..31 across the burns changed nothing (ruling out a real
+// interrupt), and alarm_pool_irq_handler -- timer_hardware_alarm_claim's only real caller
+// in this tree -- never appears in the same capture it is supposedly calling from. Fixed in
+// bootprof.py by splitting a bucket's count proportionally across every symbol it overlaps,
+// not in this function or in bootprof.c: the 16-byte bucket is the right width for the dump
+// budget (item 4), and the mistake was resolving it as a point instead of a range.
+static void run_boot_profile_selftest(void)
+{
+    BOOTPROF_FORCE_ARM();
+    BOOTPROF_MARK("selftest_begin");
+    BOOTPROF_START();
+    bootprof_burn_flash(SELFTEST_BURN_MS);
+    bootprof_burn_sram(SELFTEST_BURN_MS);
+    BOOTPROF_STOP();
+    BOOTPROF_MARK("selftest_end");
+    BOOTPROF_DUMP();
+}
+#endif
+
 int main(void)
 {
 #ifdef ANGBAND_CONSOLE
     uint64_t t0, t1;
 #endif
+
+    BOOTPROF_MARK("main");
 
     stack_paint();
 
@@ -587,7 +696,14 @@ int main(void)
     // and starts the mount straight away.
     boot_say("waiting up to 10 s for a USB terminal...");
     for (unsigned i = 0; i < 100 && !stdio_usb_connected(); i++)
+    {
         sleep_ms(100);
+        // Stage 140 item 3: the run-time sampler gate. Polled here, not in the loop below,
+        // because the harness has to arm it BEFORE init_angband() starts and the case UART
+        // (COM7) is live through this whole wait, long before stdio_usb_connected() can be
+        // true. ((void)0) without ANGBAND_BOOT_PROFILE.
+        BOOTPROF_GATE_POLL();
+    }
     sleep_ms(300);
 
     boot_say("Angband %s on the PicoCalc -- stage 050 bring-up", buildver);
@@ -597,6 +713,8 @@ int main(void)
 
     if (!sd_fs_mount())
         halt_with("SD card mount failed", sd_fs_last_error());
+
+    BOOTPROF_MARK("sd_mount");
 
     console_say("card mounted, SPI %lu Hz (asked %lu)",
                 (unsigned long)sd_fs_effective_hz(), (unsigned long)sd_fs_requested_hz());
@@ -618,6 +736,7 @@ int main(void)
     cmd_get_hook = textui_get_cmd;
 
     init_display();
+    BOOTPROF_MARK("init_display");
 #ifdef ANGBAND_CONSOLE
     event_add_handler(EVENT_NEW_LEVEL_DISPLAY, pico_on_new_level, NULL);
 
@@ -630,9 +749,20 @@ int main(void)
 #endif
     panel_is_the_terms = true;
 
+#ifdef ANGBAND_BOOT_PROFILE_SELFTEST
+    // Item 6: proof before trust, and this build's only job. It halts, so nothing below
+    // this point runs on this tree.
+    run_boot_profile_selftest();
+    halt_with("Boot profiler self-test complete", NULL);
+#endif
+
 #ifdef ANGBAND_CONSOLE
     t0 = time_us_64();
+    BOOTPROF_MARK("init_angband_begin");
+    BOOTPROF_START();
     init_angband();
+    BOOTPROF_STOP();
+    BOOTPROF_MARK("init_angband_end");
     t1 = time_us_64();
 
     printf("PICO[init] init_angband() took %lu ms\n", (unsigned long)((t1 - t0) / 1000u));
@@ -642,6 +772,7 @@ int main(void)
 #endif
 
     textui_init();
+    BOOTPROF_MARK("textui_init");
 
     // Stage 100. The battery field, the warnings and the automatic save.
     pico_battery_hook = pico_battery_changed;
@@ -662,6 +793,12 @@ int main(void)
         prt(note, 0, 0);
     }
 #endif
+
+    // Stage 140: the last phase mark, and the dump. Before pause_line(), not after -- a
+    // harness session waits for "BOOTPROF end" and only then sends the key that dismisses
+    // the splash, per bootprof.h's design note.
+    BOOTPROF_MARK("splash_key");
+    BOOTPROF_DUMP();
 
     // main-nds.c pauses here too. It is the last chance to read the splash screen, and on
     // this board it also proves a key reaches the game before anything depends on one.

@@ -161,7 +161,7 @@ option(ANGBAND_SAVE_RESTORE "Stage 065: copy PicoCalc.master over the savefile a
 option(ANGBAND_CONSOLE "Developer console: USB+UART stdio, boot lines, memory reports, the 10 s USB wait" OFF)
 
 foreach(needs_console ANGBAND_SERIAL_KEYS ANGBAND_SERIAL_SCREEN ANGBAND_SYNC ANGBAND_TURN_LOG
-                      ANGBAND_SAVE_RESTORE)
+                      ANGBAND_SAVE_RESTORE ANGBAND_BOOT_PROFILE)
     if(${needs_console} AND NOT ANGBAND_CONSOLE)
         message(FATAL_ERROR
             "${needs_console}=ON needs ANGBAND_CONSOLE=ON: every harness and bench option "
@@ -169,6 +169,55 @@ foreach(needs_console ANGBAND_SERIAL_KEYS ANGBAND_SERIAL_SCREEN ANGBAND_SYNC ANG
             "OFF) has no stdio at all. Configure with -DANGBAND_CONSOLE=ON.")
     endif()
 endforeach()
+
+# ANGBAND_BOOT_PROFILE (stage 140) -- the boot profiler. OFF in the shipped build, and
+# refused without ANGBAND_CONSOLE by the foreach loop above (the dump prints on it).
+#
+#   cmake -B build-pico2-prof -S . ... -DANGBAND_CONSOLE=ON -DANGBAND_BOOT_PROFILE=ON
+#
+# With it ON: src/platform/bootprof.c/.h add a SysTick PC/LR sampler bracketing
+# init_angband(), phase marks through the boot (src/main.c) and a per-run_parser() timing
+# bracket with the PSRAM break before and after (src/game/datafile.c). The sampler itself is
+# gated at RUN TIME, not by a second binary -- specifications.md 13's rule that the same
+# binary must be measured twice before attributing a change means the placement error bar
+# (12.7 % across four placements, stage 065) would otherwise sit on top of whatever the
+# sampler costs, with no way to separate the two. See bootprof.h for the whole design.
+#
+# WITH IT OFF every BOOTPROF_* macro is ((void)0) and bootprof.c is an empty translation
+# unit, exactly the rule ANGBAND_TURN_LOG is held to -- checked the same way, with
+# objcopy -O binary --only-section=.text and cmp against a tree with the option never named.
+option(ANGBAND_BOOT_PROFILE "Stage 140: SysTick PC/LR boot sampler, parser brackets, dump on serial" OFF)
+
+# ANGBAND_BOOT_PROFILE_SELFTEST (stage 140 item 6) -- proof before trust. OFF by default and
+# refused without ANGBAND_BOOT_PROFILE=ON: it uses the same sampler it is proving.
+#
+#   cmake -B build-pico2-profst -S . ... -DANGBAND_CONSOLE=ON -DANGBAND_BOOT_PROFILE=ON \
+#     -DANGBAND_BOOT_PROFILE_SELFTEST=ON
+#
+# With it ON, src/main.c forces the sampler on (no 'P' needed -- this tree has nothing
+# driving the UART) and, before init_angband() would run, spends 2,000 ms in a busy loop in
+# a planted flash function and 2,000 ms in one forced into SRAM, dumps, and halts. The
+# reduced table (tools/bootprof.py) must attribute 2,000 +/- 2 % samples to each, in the
+# right region: specifications.md 13's "a check that cannot see the thing changed is not a
+# check of that change" is why this exists before any real measurement is trusted.
+option(ANGBAND_BOOT_PROFILE_SELFTEST
+    "Stage 140 item 6: plant two 2,000 ms busy loops (flash, SRAM), dump, halt -- proves the sampler's region attribution" OFF)
+if(ANGBAND_BOOT_PROFILE_SELFTEST AND NOT ANGBAND_BOOT_PROFILE)
+    message(FATAL_ERROR
+        "ANGBAND_BOOT_PROFILE_SELFTEST=ON needs ANGBAND_BOOT_PROFILE=ON: the self-test "
+        "exercises the sampler it is proving. Configure with -DANGBAND_BOOT_PROFILE=ON.")
+endif()
+
+# ANGBAND_BOOT_PROFILE_SELFTEST_BREAK -- the deliberate mutation item 6 asks for: "break it
+# on purpose ... and show the table goes wrong". Reads the wrong two words of the exception
+# frame (xPSR's slot for PC, r12's slot for LR) instead of the right ones. Never useful on
+# its own; refused without ANGBAND_BOOT_PROFILE_SELFTEST=ON.
+option(ANGBAND_BOOT_PROFILE_SELFTEST_BREAK
+    "Stage 140 item 6: deliberately read the wrong exception-frame slots, to prove the self-test can fail" OFF)
+if(ANGBAND_BOOT_PROFILE_SELFTEST_BREAK AND NOT ANGBAND_BOOT_PROFILE_SELFTEST)
+    message(FATAL_ERROR
+        "ANGBAND_BOOT_PROFILE_SELFTEST_BREAK=ON needs ANGBAND_BOOT_PROFILE_SELFTEST=ON.")
+endif()
 
 # BATTERY_FAKE (stage 100) -- a constant in place of the battery register, so the 15 % and
 # 5 % warnings and the automatic save can be seen in one session. Empty (off) by default.
@@ -379,6 +428,13 @@ endif()
 
 if(ANGBAND_TURN_LOG)
     target_compile_definitions(angband_core PUBLIC ANGBAND_TURN_LOG=1)
+endif()
+
+# Stage 140. The BOOTPROF_PARSER_BEGIN()/END() call sites are in src/game/datafile.c, an
+# angband_core source, so this define has to reach the object library and not only the
+# executable -- the same reason ANGBAND_SYNC and ANGBAND_TURN_LOG are PUBLIC on it above.
+if(ANGBAND_BOOT_PROFILE)
+    target_compile_definitions(angband_core PUBLIC ANGBAND_BOOT_PROFILE=1)
 endif()
 
 # -w here; tools/compile-sweep.sh is the build that runs with -Wall and counts warnings.
@@ -639,11 +695,24 @@ pico_add_extra_outputs(angband_termdiag)
 # pico_term_last_fresh_us() out of main-pico.c. It is compiled unconditionally and is an
 # empty translation unit unless ANGBAND_TURN_LOG is set, which keeps it in
 # tools/port-warnings.sh's list either way.
+# Stage 140. UNLIKE turnlog.c, bootprof.c is added to the SOURCE LIST ONLY when the option
+# is ON, not always-present-but-empty. specifications.md 13's own ANGBAND_SYNC precedent
+# (sync_end() is deliberately not in a file of its own) is why: one more object on this
+# target's link moves the linker's long-branch veneers EVEN WHEN IT CONTRIBUTES NOTHING, so
+# an always-linked empty bootprof.c.obj still shifted build-pico2's .text by 24,497 of
+# 500,088 bytes with text/data/bss unchanged -- found by this stage's own criterion-1 cmp,
+# not asserted. Kept out of the link entirely, the shipped build cannot see it at all.
+set(ANGBAND_BOOT_PROFILE_SOURCES "")
+if(ANGBAND_BOOT_PROFILE)
+    list(APPEND ANGBAND_BOOT_PROFILE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/bootprof.c)
+endif()
+
 add_executable(angband
     ${CMAKE_CURRENT_SOURCE_DIR}/src/main.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/main-pico.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/turnlog.c
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/utf8.c
+    ${ANGBAND_BOOT_PROFILE_SOURCES}
     $<TARGET_OBJECTS:angband_core>
 )
 
@@ -680,6 +749,10 @@ target_compile_definitions(angband PRIVATE
     # Stage 090. This target only: src/main.c and src/platform/*.c read it; no src/game/
     # source does, and angband_termdiag compiles main-pico.c without it.
     $<$<BOOL:${ANGBAND_CONSOLE}>:ANGBAND_CONSOLE=1>
+    # Stage 140. angband_core gets the same define just above, for datafile.c's bracket.
+    $<$<BOOL:${ANGBAND_BOOT_PROFILE}>:ANGBAND_BOOT_PROFILE=1>
+    $<$<BOOL:${ANGBAND_BOOT_PROFILE_SELFTEST}>:ANGBAND_BOOT_PROFILE_SELFTEST=1>
+    $<$<BOOL:${ANGBAND_BOOT_PROFILE_SELFTEST_BREAK}>:ANGBAND_BOOT_PROFILE_SELFTEST_BREAK=1>
 )
 
 # THE STACK. specifications.md 12 recorded the SDK's 2 KB core-0 stack in the fixed 4 KB
@@ -742,6 +815,14 @@ if(ANGBAND_TURN_LOG)
     list(APPEND ANGBAND_SRAM_LIBRARY_MEMBERS
         */src/platform/turnlog.c.obj */hardware_timer/timer.c.obj)
 endif()
+# Stage 140. THE WHOLE FILE, not only the SysTick handler: bootprof.h's own rule is "the
+# handler and everything it calls is in SRAM", and excluding the object rather than picking
+# out individual functions is the same choice turnlog.c's block above makes, checked the
+# same way -- sram-check.py's stage 140 extension reads this list, not a hand-typed one.
+if(ANGBAND_BOOT_PROFILE)
+    list(APPEND ANGBAND_SRAM_LIBRARY_MEMBERS
+        */src/platform/bootprof.c.obj */hardware_timer/timer.c.obj)
+endif()
 set(ANGBAND_SRAM_PATTERNS "")
 foreach(obj IN LISTS ANGBAND_SRAM_OBJECTS)
     string(APPEND ANGBAND_SRAM_PATTERNS " */src/game/${obj}.c.obj")
@@ -760,6 +841,13 @@ target_compile_definitions(angband PRIVATE PICO_STACK_SIZE=0x10000)
 # pico_rand for the RNG seed: specifications.md 6.3 says time() here is boot time plus a
 # constant, so z-rand.c's Rand_init() would roll the same dungeon on every boot.
 target_link_libraries(angband PRIVATE angband_platform hardware_dma pico_rand)
+
+# Stage 140. exception_set_exclusive_handler() (bootprof.c) is hardware_exception, which
+# nothing else in this tree links. Only when the option is on: the shipped build must not
+# gain a dependency it never calls into.
+if(ANGBAND_BOOT_PROFILE)
+    target_link_libraries(angband PRIVATE hardware_exception)
+endif()
 
 # specifications.md 6.5. The game is not a diagnostic. In a console build every boot line,
 # the init_angband() timing and the per-level heap figures go to serial, and a quit()

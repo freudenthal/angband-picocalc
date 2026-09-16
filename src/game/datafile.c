@@ -20,6 +20,7 @@
  */
 
 #include "angband.h"
+#include "bootprof.h"
 #include "datafile.h"
 #include "game-world.h"
 #include "init.h"
@@ -43,9 +44,16 @@ const char *parser_error_str[PARSE_ERROR_MAX] = {
  * ------------------------------------------------------------------------ */
 
 errr run_parser(struct file_parser *fp) {
-	struct parser *p = fp->init();
+	struct parser *p;
 	errr r;
+
+	/* PORT: stage 140 boot profiler. ((void)0) with ANGBAND_BOOT_PROFILE unset, so this
+	 * bracket costs nothing in the shipped build -- see src/platform/bootprof.h. */
+	BOOTPROF_PARSER_BEGIN();
+
+	p = fp->init();
 	if (!p) {
+		BOOTPROF_PARSER_END(fp->name);
 		return PARSE_ERROR_GENERIC;
 	}
 	r = fp->run(p);
@@ -57,6 +65,7 @@ errr run_parser(struct file_parser *fp) {
 				parser_error_str[r] : "unspecified error");
 		}
 	}
+	BOOTPROF_PARSER_END(fp->name);
 	return r;
 }
 
